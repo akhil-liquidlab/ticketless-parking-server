@@ -1,5 +1,6 @@
 const Vehicle = require('../models/vehicleModel.js');
-const ParkingSpace = require('../models/parkingSpaceModel');
+const GlobalModel = require('../models/globalModel');
+const ParkingHistory = require('../models/parkingHistoryModel');
 const { handleSuccess, handleError } = require('../utils/responseUtils.js');
 const moment = require('moment');
 
@@ -21,6 +22,17 @@ const registerVehicle = async (req, res) => {
         // Validate required fields
         if (!vehicle_no || !vehicle_type || !owner_first_name || !owner_last_name || !class_code || !renewal_type || !renewal_charge || !effective_from_date || !registration_status) {
             return res.status(400).json({ message: 'All fields are required' });
+        }
+
+        // Check if the class_code is valid by checking in the supported classes in the global data
+        const globalInfo = await GlobalModel.findOne();
+        if (!globalInfo) {
+            return res.status(500).json({ message: 'Global data not found' });
+        }
+
+        const classExists = globalInfo.supported_classes.some(cls => cls.code === class_code);
+        if (!classExists) {
+            return res.status(400).json({ message: `Invalid class code ${class_code}. Please choose a valid class.` });
         }
 
         // Check for duplicate vehicle registration number
@@ -78,6 +90,9 @@ const registerVehicle = async (req, res) => {
         res.status(500).json({ message: 'Internal server error. Please try again later.' });
     }
 };
+
+// module.exports = { registerVehicle };
+
 
 // Update an existing vehicle's registration
 const updateVehicle = async (req, res) => {
@@ -185,74 +200,116 @@ const calculateExpirationInSeconds = (effective_from_date, renewal_type) => {
     }
 };
 
-// Validate vehicle entry
 const validateVehicleEntry = async (req, res) => {
-    const { vehicle_no } = req.body;
+    const { vehicle_no, entry_time } = req.body;
+
+    if (!vehicle_no) {
+        return res.status(403).json({ message: "No vehicle number found" });
+    }
 
     try {
-        // Retrieve parking space data
-        const parkingSpace = await ParkingSpace.findOne({ code: 'main-prking-space' });
-
-        if (!parkingSpace) {
+        // Fetch GlobalData from the database
+        const globalData = await GlobalModel.findOne();
+        if (!globalData) {
             return res.status(500).json({
-                message: 'Parking space data not found.',
+                screen_message_type: 'error',
+                screen_title: 'Configuration Error',
+                screen_message: 'Global parking data is not initialized.',
+                barrier_status: 'closed',
             });
         }
 
-        // Check if vehicle is registered
+        // Fetch vehicle from the database
         const vehicle = await Vehicle.findOne({ vehicle_no });
 
-        if (!vehicle) {
-            if (parkingSpace.public_slots <= 0) {
-                return res.status(403).json({
-                    message: 'No available slots for unregistered vehicles.',
-                    barrier_status: 'closed',
-                    is_registered_vehicle: false,
-                });
-            }
-
-            parkingSpace.public_slots -= 1;
-            await parkingSpace.save();
-
-            return res.json({
-                message: 'Unregistered vehicle allowed entry',
-                is_registered_vehicle: false,
-                registration_status: 'unregistered',
-                barrier_status: 'open',
-                entry_time: new Date().toISOString(),
-            });
-        }
-
-        if (vehicle.is_blacklisted) {
+        // Handle Blacklisted Vehicle
+        if (vehicle && vehicle.is_blacklisted) {
             return res.status(403).json({
-                message: 'Vehicle is blacklisted',
+                screen_message_type: 'error',
+                screen_title: 'Access Denied',
+                screen_message: `Vehicle ${vehicle_no} is blacklisted and cannot enter.`,
                 barrier_status: 'closed',
-                is_registered_vehicle: true,
             });
         }
 
-        const currentDate = new Date();
-        const expirationDate = calculateEndingDate(vehicle.renewal_type, vehicle.effective_from_date);
-
-        if (currentDate > expirationDate) {
+        // Handle Duplicate Entry
+        if (vehicle && vehicle.status === 'parked') {
             return res.status(400).json({
-                message: 'Vehicle registration has expired',
-                expiration_date: expirationDate.toISOString(),
+                screen_message_type: 'error',
+                screen_title: 'Duplicate Entry',
+                screen_message: `Vehicle ${vehicle_no} is already parked.`,
+                barrier_status: 'closed',
             });
         }
 
-        res.json({
-            message: 'Vehicle validated successfully',
-            is_registered_vehicle: true,
-            registration_status: 'active',
+        // Handle New Vehicle Entry (Unregistered Vehicle)
+        if (!vehicle) {
+            return res.status(400).json({
+                screen_message_type: 'error',
+                screen_title: 'Vehicle Not Registered',
+                screen_message: `Vehicle ${vehicle_no} is not registered. Please register before entering.`,
+                barrier_status: 'closed',
+            });
+        }
+
+        // For Registered Vehicle
+        const class_code = vehicle.class_code;
+
+        // Check Class Capacity
+        const parkingClass = globalData.supported_classes.find(cls => cls.code === class_code);
+        if (!parkingClass) {
+            return res.status(400).json({
+                screen_message_type: 'error',
+                screen_title: 'Invalid Class Code',
+                screen_message: `Class code ${class_code} is not supported.`,
+                barrier_status: 'closed',
+            });
+        }
+
+        if (parkingClass.slots_used >= parkingClass.slots_reserved) {
+            return res.status(400).json({
+                screen_message_type: 'error',
+                screen_title: 'Class Full',
+                screen_message: `No parking slots available for class ${class_code}.`,
+                barrier_status: 'closed',
+            });
+        }
+
+        // Update slot usage and global data
+        parkingClass.slots_used++;
+        globalData.occupied_slots++;
+        globalData.available_slots = globalData.total_parking_slots - globalData.occupied_slots;
+
+        // Save updated global data
+        await globalData.save();
+
+        // Update vehicle status
+        vehicle.status = 'parked';
+        vehicle.starting_date = entry_time || new Date().toISOString();
+        await vehicle.save();
+
+        // Success Response
+        return res.status(200).json({
+            screen_message_type: 'success',
+            screen_title: 'Vehicle Entry Validated',
+            screen_message: `Vehicle ${vehicle_no} has been validated for entry.`,
             barrier_status: 'open',
-            entry_time: new Date().toISOString(),
+            max_waiting_duration: 30,
+            entry_time: vehicle.starting_date,
+            class_code: vehicle.class_code,
+            globalData,
         });
     } catch (error) {
-        console.error(error);
-        res.status(500).json({ message: 'Server error' });
+        console.error("Error during validation:", error);
+        return res.status(500).json({
+            screen_message_type: 'error',
+            screen_title: 'Error',
+            screen_message: 'There was an issue validating vehicle entry.',
+            error: error.message,
+        });
     }
 };
+
 
 // Delete Vehicle
 const deleteVehicle = async (req, res) => {
@@ -292,90 +349,156 @@ const getAllRegisteredVehicles = async (req, res) => {
     }
 };
 
-// Validate vehicle exit (add this method)
+// Validate vehicle exit
 const validateVehicleExit = async (req, res) => {
     const { vehicle_no, is_paid } = req.body;
 
     try {
+        // Find the vehicle by vehicle_no
         const vehicle = await Vehicle.findOne({ vehicle_no });
 
         if (!vehicle) {
-            return res.status(404).json({
-                message: 'Vehicle not found',
-                screen_message_type: 'error',
-                screen_title: 'Error',
-                screen_message: 'Vehicle not found in the system.',
-            });
+            return handleError(res, 'Vehicle not found', null, 404);
         }
 
-        // Perform exit validation (mock example for parking duration and tariff calculation)
-        const totalParkingDuration = 92846; // Mock data for total parking duration
-        const tariff = {
-            gst: 17.2,
-            total_amount: 298.8,
-            discount_amount: 29.8,
-            discount_percentage: 10,
-            amount_payable: is_paid ? 0 : 298.8, // Discount if paid already
-        };
+        // Check if the vehicle is blacklisted
+        if (vehicle.is_blacklisted) {
+            return handleError(res, 'Vehicle is blacklisted and cannot exit', null, 403);
+        }
 
-        // Send exit details in the response
+        // Check if the vehicle is already exited
+        if (vehicle.status === 'exited') {
+            return handleError(res, 'Vehicle has already exited', null, 400);
+        }
+
+        // Check if the vehicle is parked
+        if (vehicle.status !== 'parked') {
+            return handleError(res, 'Vehicle is not currently parked', null, 400);
+        }
+
+        // Calculate parking duration (in seconds)
+        const exit_time = new Date(); // Current exit time
+        const parking_duration = Math.floor((exit_time - vehicle.starting_date) / 1000); // In seconds
+
+        // Calculate the tariff
+        const tariff = calculateTariff(parking_duration);
+
+        // If the user has paid, set the parking fee to 0, otherwise show the tariff
+        const amount_due = is_paid ? 0 : tariff.amount_payable;
+
+        // Add a new parking history entry
+        const newParkingHistory = new ParkingHistory({
+            vehicle_no: vehicle.vehicle_no,
+            class_code: vehicle.class_code,
+            entry_time: vehicle.starting_date,
+            exit_time: exit_time,
+            parking_duration: parking_duration,
+            tariff: {
+                gst: tariff.gst,
+                total_amount: tariff.total_amount,
+                discount_amount: tariff.discount_amount,
+                discount_percentage: tariff.discount_percentage,
+                amount_payable: amount_due,
+            },
+        });
+
+        // Save the parking history to the ParkingHistory collection
+        await newParkingHistory.save();
+
+        // Update the vehicle status to 'exited'
+        vehicle.status = 'exited';
+        vehicle.ending_date = exit_time;
+
+        // Save the updated vehicle information
+        await vehicle.save();
+
+        // Return success response
         res.json({
             screen_message_type: "success",
             screen_title: "Thank You!",
             screen_message: "Vehicle Verified. Thank you for coming!",
             barrier_status: "open",
-            max_waiting_duration: 30,
-            exit_time: new Date().toISOString(),
-            total_parking_duration: totalParkingDuration,
-            tariff,
+            exit_time: exit_time.toISOString(),
+            total_parking_duration: parking_duration,
+            tariff: {
+                gst: tariff.gst,
+                total_amount: tariff.total_amount,
+                discount_amount: tariff.discount_amount,
+                discount_percentage: tariff.discount_percentage,
+                amount_payable: amount_due,
+            },
             class_code: vehicle.class_code,
         });
+
     } catch (error) {
         console.error(error);
-        return res.status(500).json({
-            message: 'Error validating vehicle exit',
-            screen_message_type: 'error',
-            screen_title: 'Error',
-            screen_message: 'There was an issue validating the vehicle exit.',
-        });
+        return handleError(res, 'Error validating vehicle exit', error, 500);
     }
 };
 
-// Get parking history for vehicles (add this method)
-const getParkingHistory = async (req, res) => {
-    try {
-        const vehicles = await Vehicle.find();  // Fetch all vehicles
 
-        if (!vehicles.length) {
-            return res.status(404).json({
-                message: 'No vehicles found',
-                screen_message_type: 'error',
-                screen_title: 'No Records',
-                screen_message: 'There are no vehicles in the system.',
-            });
+
+// Function to calculate the parking tariff based on the parking duration
+const calculateTariff = (durationInSeconds) => {
+    // Mock tariff calculation logic, adjust according to your business rules
+    const base_rate_per_hour = 10; // Assuming a base rate of 10 currency units per hour
+    const gst_percentage = 17.2; // Example GST percentage
+    const discount_percentage = 10; // Example discount percentage
+
+    const total_hours = Math.ceil(durationInSeconds / 3600); // Convert duration to hours and round up
+    const total_amount = total_hours * base_rate_per_hour; // Total parking charge before tax
+
+    // Calculate GST and discount
+    const gst_amount = (total_amount * gst_percentage) / 100;
+    const discount_amount = (total_amount * discount_percentage) / 100;
+
+    const total_amount_with_gst = total_amount + gst_amount;
+    const amount_payable = total_amount_with_gst - discount_amount;
+
+    return {
+        gst: gst_amount,
+        total_amount: total_amount_with_gst,
+        discount_amount: discount_amount,
+        discount_percentage: discount_percentage,
+        amount_payable: amount_payable,
+    };
+};
+
+// Get parking history for vehicles
+const getParkingHistory = async (req, res) => {
+    const { sort_order = 'desc' } = req.query; // Use query parameter to determine sorting order ('asc' or 'desc')
+
+    try {
+        // Fetch all parking history records
+        const parkingHistory = await ParkingHistory.find({}).sort({ entry_time: sort_order === 'asc' ? 1 : -1 });
+
+        // Check if there is any parking history
+        if (!parkingHistory || parkingHistory.length === 0) {
+            return handleError(res, 'No parking history found', null, 404);
         }
 
-        // Map vehicles into a parking history format
-        const parkingHistory = vehicles.map((vehicle) => ({
-            registration_id: vehicle._id,
-            entry_time: vehicle.starting_date,
-            exit_time: vehicle.ending_date,
-            total_parking_duration: vehicle.registration_expire_in,  // Example total parking duration
-            class_code: vehicle.class_code,
+        // Map the data to return the desired details
+        const formattedHistory = parkingHistory.map((history) => ({
+            vehicle_no: history.vehicle_no,
+            class_code: history.class_code,
+            entry_time: history.entry_time,
+            exit_time: history.exit_time,
+            total_parking_duration: history.parking_duration,
+            tariff: history.tariff,
         }));
 
-        // Respond with the sorted parking history (could be based on entry time)
-        res.json(parkingHistory);
+        // Return the parking history
+        res.json({
+            vehicles: formattedHistory,
+        });
+
     } catch (error) {
         console.error(error);
-        return res.status(500).json({
-            message: 'Error fetching parking history',
-            screen_message_type: 'error',
-            screen_title: 'Error',
-            screen_message: 'There was an issue while fetching parking history.',
-        });
+        return handleError(res, 'Error fetching parking history', error, 500);
     }
 };
+
+
 
 module.exports = {
     registerVehicle,

@@ -6,7 +6,7 @@ const {
     updateVehicle,
     getAllRegisteredVehicles,
     getParkingHistory
-} = require('../controllers/parkingController');
+} = require('../controllers/parkingController.js');
 const authenticateToken = require('../middlewares/authenticateToken');
 
 const router = express.Router();

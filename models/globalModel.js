@@ -1,12 +1,68 @@
-const globalData = {
-    code: "main-prking-space-2",
-    name: "Main Parking Space 2",
-    created_date: "2024-01-15 23:58",
-    total_capacity: 2355,
-    slots_reserved: 677,
-    public_slots: 180,
-    slots_reservable: 320,
-    last_updated_date: "2024-01-15 23:58",
-};
+const mongoose = require('mongoose');
 
-module.exports = globalData;
+const classSchema = new mongoose.Schema({
+    code: {
+        type: String,
+        required: true,
+    },
+    name: {
+        type: String,
+        required: true,
+    },
+    slots_reserved: {
+        type: Number,
+        required: true,
+    },
+    slots_used: {
+        type: Number,
+        required: true,
+    },
+});
+
+const publicSlotsSchema = new mongoose.Schema({
+    total: {
+        type: Number,
+        required: true,
+    },
+    occupied: {
+        type: Number,
+        required: true,
+    },
+    available: {
+        type: Number,
+        required: true,
+    },
+});
+
+const globalDataSchema = new mongoose.Schema({
+    total_parking_slots: {
+        type: Number,
+        required: true,
+    },
+    occupied_slots: {
+        type: Number,
+        required: true,
+    },
+    available_slots: {
+        type: Number,
+        required: true,
+    },
+    total_registered_users: {
+        type: Number,
+        required: true,
+    },
+    system_uptime: {
+        type: String,
+        required: true,
+    },
+    last_maintenance_date: {
+        type: Date,
+        required: true,
+    },
+    supported_classes: [classSchema],
+    public_slots: publicSlotsSchema,
+});
+
+const GlobalData = mongoose.model('GlobalData', globalDataSchema);
+
+module.exports = GlobalData;
