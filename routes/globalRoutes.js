@@ -4,6 +4,7 @@ const {
     updateGlobalInfo,
 } = require('../controllers/globalController'); // Controller for global info
 const {
+    getAllClasses,
     updateClassData,
     addClassData,
     deleteClassData,
@@ -20,6 +21,7 @@ router.get('/', authenticateToken, getGlobalInfo);
 router.put('/', authenticateToken, updateGlobalInfo);
 
 // Routes for class-specific operations
+router.get('/classes', authenticateToken, getAllClasses); // Update class info
 router.put('/classes', authenticateToken, updateClassData); // Update class info
 router.post('/classes', authenticateToken, addClassData); // Add a new class
 router.delete('/classes/:code', authenticateToken, deleteClassData); // Delete a class by code

@@ -6,19 +6,21 @@ const moment = require('moment');
 
 // Register a new vehicle
 const registerVehicle = async (req, res) => {
-    const { vehicle_no, vehicle_type, owner_first_name, owner_last_name, class_code, registration_status } = req.body;
+    const { vehicle_no, vehicle_type, owner_first_name, owner_last_name, class_code } = req.body;
 
     try {
         // Validate required fields
-        if (!vehicle_no || !vehicle_type || !owner_first_name || !owner_last_name || !class_code || !registration_status) {
+        const missingFields = [
+            !vehicle_no ? 'vehicle_no' : null,
+            !vehicle_type ? 'vehicle_type' : null,
+            !owner_first_name ? 'owner_first_name' : null,
+            !owner_last_name ? 'owner_last_name' : null,
+            !class_code ? 'class_code' : null
+        ].filter(field => field !== null);
+
+        if (missingFields.length > 0) {
             return res.status(400).json({
-                message: 'All fields are required. Missing: ' +
-                    (!vehicle_no ? 'vehicle_no, ' : '') +
-                    (!vehicle_type ? 'vehicle_type, ' : '') +
-                    (!owner_first_name ? 'owner_first_name, ' : '') +
-                    (!owner_last_name ? 'owner_last_name, ' : '') +
-                    (!class_code ? 'class_code, ' : '') +
-                    (!registration_status ? 'registration_status, ' : '')
+                message: `All fields are required. Missing: ${missingFields.join(', ')}`,
             });
         }
 
@@ -28,43 +30,49 @@ const registerVehicle = async (req, res) => {
             return res.status(500).json({ message: 'Global data not found. Please contact the administrator.' });
         }
 
-        // Check if the class_code is valid
-        const classExists = globalInfo.supported_classes.some(cls => cls.code === class_code);
-        if (!classExists) {
+        // Check if the class_code is valid and active
+        const classInfo = globalInfo.supported_classes.find(cls => cls.code === class_code);
+        if (!classInfo) {
             return res.status(400).json({ message: `Invalid class code "${class_code}". Please choose a valid class.` });
+        }
+
+        // Ensure the class status is active
+        if (classInfo.status !== 'active') {
+            return res.status(400).json({
+                message: `The class status is "${classInfo.status}", which is not active. Vehicle cannot be registered.`,
+            });
         }
 
         // Check for duplicate vehicle registration number
         const existingVehicle = await Vehicle.findOne({ vehicle_no });
         if (existingVehicle) {
-            return res.status(409).json({ message: `A vehicle with the registration number "${vehicle_no}" already exists. Please verify the number.` });
+            return res.status(409).json({
+                message: `A vehicle with the registration number "${vehicle_no}" already exists. Please verify the number.`,
+            });
         }
 
         // Get renewal details dynamically from the class
-        const vehicleClass = globalInfo.supported_classes.find(cls => cls.code === class_code);
-        const renewal_type = vehicleClass.renewal_type;
-        const renewal_charge = vehicleClass.renewal_charge;
+        const renewal_type = classInfo.renewal_type;
+        const renewal_charge = classInfo.renewal_charge;
 
-        // Directly calculate the expiration date based on renewal type
-        let expirationDate;
+        // Calculate the expiration date based on renewal type
         const currentDate = new Date();
+        let expirationDate;
         if (renewal_type === 'monthly') {
             expirationDate = new Date(currentDate.setMonth(currentDate.getMonth() + 1)); // 1 month from today
         } else if (renewal_type === 'yearly') {
             expirationDate = new Date(currentDate.setFullYear(currentDate.getFullYear() + 1)); // 1 year from today
         } else {
-            // Default: if renewal type is not recognized, set 1 year expiration
-            expirationDate = new Date(currentDate.setFullYear(currentDate.getFullYear() + 1));
+            expirationDate = new Date(currentDate.setFullYear(currentDate.getFullYear() + 1)); // Default to 1 year
         }
 
-        // Create the vehicle entry without unnecessary payment or starting date fields
+        // Create the vehicle entry without unnecessary fields
         const newVehicle = new Vehicle({
             vehicle_no,
             vehicle_type,
             owner_first_name,
             owner_last_name,
             class_code,
-            registration_status,
             ending_date: expirationDate, // Store expiration date
             renewal_type, // Store renewal type from class
             renewal_charge, // Store renewal charge from class
@@ -81,7 +89,6 @@ const registerVehicle = async (req, res) => {
             owner_first_name: newVehicle.owner_first_name,
             owner_last_name: newVehicle.owner_last_name,
             class_code: newVehicle.class_code,
-            registration_status: newVehicle.registration_status,
             ending_date: newVehicle.ending_date,
             renewal_type, // Return the dynamic renewal type
             renewal_charge, // Return the dynamic renewal charge
@@ -107,6 +114,7 @@ const registerVehicle = async (req, res) => {
         res.status(500).json({ message: 'Internal server error. Please try again later or contact support.' });
     }
 };
+
 
 
 
@@ -414,6 +422,7 @@ const getAllRegisteredVehicles = async (req, res) => {
 
 // Validate vehicle exit
 // Validate vehicle exit
+// Validate vehicle exit
 const validateVehicleExit = async (req, res) => {
     const { vehicle_no, is_paid } = req.body;
 
@@ -440,16 +449,22 @@ const validateVehicleExit = async (req, res) => {
             return handleError(res, 'Vehicle is not currently parked', null, 400);
         }
 
-        // Calculate parking duration (in seconds)
-        const exit_time = new Date(); // Current exit time
-        const parking_duration = Math.floor((exit_time - vehicle.starting_date) / 1000); // In seconds
-
         // Fetch the global model data to get amount_per_minute
-        const globalData = await GlobalModel.findOne(); // Changed from GlobalData to GlobalModel
+        const globalData = await GlobalModel.findOne();
 
         if (!globalData) {
             return handleError(res, 'Global data not found', null, 500);
         }
+
+        // Fetch the class info for the vehicle
+        const classInfo = globalData.supported_classes.find(cls => cls.code === vehicle.class_code);
+        if (!classInfo) {
+            return handleError(res, `Class code "${vehicle.class_code}" not found`, null, 400);
+        }
+
+        // Calculate parking duration (in seconds)
+        const exit_time = new Date(); // Current exit time
+        const parking_duration = Math.floor((exit_time - vehicle.starting_date) / 1000); // In seconds
 
         const amount_per_minute = globalData.amount_per_minute;
 
@@ -457,15 +472,14 @@ const validateVehicleExit = async (req, res) => {
         const parking_duration_in_minutes = parking_duration / 60; // Convert seconds to minutes
         const tariff_amount = parking_duration_in_minutes * amount_per_minute;
 
-        // Check if the vehicle is registered (i.e., exists in the Vehicle collection)
+        // Check if the class is active
         let amount_due = 0;
 
-        if (vehicle.registration_status !== 'active') {
-            // For unregistered vehicles, set amount payable to 0 or apply normal tariff calculation
+        if (classInfo.status !== 'active') {
+            // If the class is not active, the user has to pay the tariff
             amount_due = is_paid ? 0 : tariff_amount;
         } else {
-            // For registered vehicles, amount payable is 0 or based on special logic
-            // Example: Apply a discount or leave amount_due as 0 for registered vehicles
+            // If the class is active, there is no fee for registered vehicles
             amount_due = 0; // Registered vehicles should have no fee
         }
 
@@ -515,6 +529,7 @@ const validateVehicleExit = async (req, res) => {
         return handleError(res, 'Error validating vehicle exit', error, 500);
     }
 };
+
 
 
 

@@ -20,14 +20,42 @@ const classSchema = new mongoose.Schema({
     },
     renewal_type: {
         type: String,
-        required: true, // Assuming renewal type is mandatory for the class
+        required: function () { return this.status === 'active'; }, // Required only if class is active
         enum: ['monthly', 'yearly', 'weekly'], // Example enum values, adjust as needed
     },
     renewal_charge: {
         type: Number,
-        required: true, // Assuming renewal charge is mandatory for the class
+        required: function () { return this.status === 'active'; }, // Required only if class is active
+    },
+    status: {
+        type: String,
+        enum: ['active', 'inactive', 'expired', 'suspended', 'pending'], // Multiple possible status values
+        default: 'inactive', // Default status is inactive
+    },
+    starting_date: {
+        type: Date,
+        required: function () { return this.status === 'active'; }, // Required only if class is active
+    },
+    ending_date: {
+        type: Date,
+        required: function () { return this.status === 'active'; }, // Required only if class is active
+    },
+    expiring_in: {
+        type: Number,
+        default: function () {
+            // Calculate the difference between the current date and the ending date
+            if (this.ending_date) {
+                const currentDate = new Date();
+                const expirationDate = new Date(this.ending_date);
+                const timeDifference = expirationDate - currentDate;
+                // Return the difference in days
+                return Math.floor(timeDifference / (1000 * 3600 * 24));
+            }
+            return 0; // If ending_date is not set, return 0
+        },
     },
 });
+
 
 const publicSlotsSchema = new mongoose.Schema({
     total: {
