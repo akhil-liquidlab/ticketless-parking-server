@@ -8,31 +8,29 @@ const vehicleSchema = new mongoose.Schema({
     },
     vehicle_type: {
         type: String,
-        required: true,
+        required: function () { return this.registration_status === 'active'; }, // Required only for registered vehicles
+        default: null, // For unregistered vehicles, defaults to null
     },
     owner_first_name: {
         type: String,
-        required: true,
+        required: function () { return this.registration_status === 'active'; }, // Required only for registered vehicles
+        default: null, // For unregistered vehicles, defaults to null
     },
     owner_last_name: {
         type: String,
-        required: true,
+        required: function () { return this.registration_status === 'active'; }, // Required only for registered vehicles
+        default: null, // For unregistered vehicles, defaults to null
     },
     class_code: {
         type: String,
         required: true, // Class code for registered and unregistered vehicles
     },
-    renewal_type: {
-        type: String,
-        required: true,
-    },
-    renewal_charge: {
-        type: Number,
-        required: true,
-    },
     effective_from_date: {
         type: Date,
         required: true,
+        default: function () {
+            return this.registration_status === 'active' ? new Date() : new Date(); // Set to current date for both registered and unregistered vehicles
+        },
     },
     registration_status: {
         type: String,
@@ -65,7 +63,9 @@ const vehicleSchema = new mongoose.Schema({
     payment_status: {
         type: String,
         enum: ['paid', 'unpaid', 'free'],
-        default: 'unpaid', // Payment status for unregistered vehicles (free for registered vehicles based on system settings)
+        default: function () {
+            return this.registration_status === 'active' ? 'unpaid' : 'free'; // Default to 'free' for unregistered vehicles
+        },
     },
 });
 

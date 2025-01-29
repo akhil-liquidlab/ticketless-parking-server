@@ -16,6 +16,7 @@ const getGlobalInfo = async (req, res) => {
 };
 
 // Update global information (except classes)
+// Update global information (including public parking slots)
 const updateGlobalInfo = async (req, res) => {
     const updateFields = req.body;
 
@@ -25,13 +26,27 @@ const updateGlobalInfo = async (req, res) => {
             return res.status(404).json({ message: 'Global data not found.' });
         }
 
-        // Update only global information fields (excluding classes)
+        // If the request contains public parking slot updates
+        if (updateFields.public_slots) {
+            const { total, occupied, available } = updateFields.public_slots;
+
+            // Update the public parking slots in the global data
+            globalInfo.public_slots.total = total;
+            globalInfo.public_slots.occupied = occupied;
+            globalInfo.public_slots.available = available;
+
+            // Recalculate available slots in global info
+            globalInfo.available_slots = globalInfo.total_parking_slots - globalInfo.occupied_slots;
+        }
+
+        // Update other global information fields
         Object.keys(updateFields).forEach(field => {
-            if (field !== 'classes') {
+            if (field !== 'public_slots') { // Don't overwrite public_slots in the main update
                 globalInfo[field] = updateFields[field];
             }
         });
 
+        globalInfo.last_maintenance_date = new Date(); // Update last maintenance date or other time-based fields
         globalInfo.last_updated_date = new Date().toISOString(); // Update the last updated timestamp
         await globalInfo.save();
 

@@ -4,6 +4,7 @@ const classSchema = new mongoose.Schema({
     code: {
         type: String,
         required: true,
+        unique: true, // Ensure the class code is unique
     },
     name: {
         type: String,
@@ -16,6 +17,15 @@ const classSchema = new mongoose.Schema({
     slots_used: {
         type: Number,
         required: true,
+    },
+    renewal_type: {
+        type: String,
+        required: true, // Assuming renewal type is mandatory for the class
+        enum: ['monthly', 'yearly', 'weekly'], // Example enum values, adjust as needed
+    },
+    renewal_charge: {
+        type: Number,
+        required: true, // Assuming renewal charge is mandatory for the class
     },
 });
 
@@ -61,6 +71,10 @@ const globalDataSchema = new mongoose.Schema({
     },
     supported_classes: [classSchema],
     public_slots: publicSlotsSchema,
+    amount_per_minute: { // New field added to calculate tariff
+        type: Number,
+        required: true, // This is required to calculate the parking fee
+    },
 });
 
 const GlobalData = mongoose.model('GlobalData', globalDataSchema);

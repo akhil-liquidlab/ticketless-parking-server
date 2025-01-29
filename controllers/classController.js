@@ -2,8 +2,9 @@
 const Global = require('../models/globalModel.js');
 
 // Update an existing class
+// Update an existing class
 const updateClassData = async (req, res) => {
-    const { code, slots_reserved, slots_used, name } = req.body;
+    const { code, slots_reserved, slots_used, name, renewal_type, renewal_charge } = req.body;
 
     try {
         const globalInfo = await Global.findOne();
@@ -41,6 +42,15 @@ const updateClassData = async (req, res) => {
             classToUpdate.name = name;
         }
 
+        // Update renewal_type and renewal_charge if provided
+        if (renewal_type) {
+            classToUpdate.renewal_type = renewal_type;
+        }
+
+        if (renewal_charge !== undefined) {
+            classToUpdate.renewal_charge = renewal_charge;
+        }
+
         // Save the updated global data
         await globalInfo.save();
 
@@ -54,8 +64,9 @@ const updateClassData = async (req, res) => {
     }
 };
 
+
 const addClassData = async (req, res) => {
-    const { code, name, slots_reserved, slots_used } = req.body;
+    const { code, name, slots_reserved, slots_used, renewal_type, renewal_charge } = req.body;
 
     try {
         const globalInfo = await Global.findOne();
@@ -81,8 +92,13 @@ const addClassData = async (req, res) => {
             return res.status(400).json({ message: 'Slots values cannot be negative.' });
         }
 
+        // Ensure renewal charge and type are provided
+        if (!renewal_type || !renewal_charge) {
+            return res.status(400).json({ message: 'Renewal type and renewal charge must be specified for the class.' });
+        }
+
         // Add new class
-        const newClass = { code, name, slots_reserved, slots_used: slots_used || 0 };
+        const newClass = { code, name, slots_reserved, slots_used: slots_used || 0, renewal_type, renewal_charge };
         globalInfo.supported_classes.push(newClass);
 
         // Save updated global data
@@ -97,6 +113,7 @@ const addClassData = async (req, res) => {
         res.status(500).json({ message: 'Error adding class data.' });
     }
 };
+
 
 // Delete a class
 const deleteClassData = async (req, res) => {

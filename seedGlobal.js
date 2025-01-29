@@ -50,6 +50,7 @@ const seedGlobal = async () => {
                 available: 300, // public_slots.total - public_slots.occupied
             },
             supported_classes: [], // No classes by default
+            amount_per_minute: 2.5, // Add this field to resolve the validation error
             created_date: new Date(),
             last_updated_date: new Date(),
         });
