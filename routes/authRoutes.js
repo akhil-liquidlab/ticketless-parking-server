@@ -1,11 +1,12 @@
 const express = require('express');
-const { login, protectedRoute } = require('../controllers/authController');
+const { login, registerUser, updateUser, deleteUser } = require('../controllers/authController');
 const authenticateToken = require('../middlewares/authenticateToken');
 
 const router = express.Router();
 
-// Authentication routes
 router.post('/login', login);
-router.get('/protected', authenticateToken, protectedRoute);
+router.post('/register', registerUser);
+router.put('/update', authenticateToken, updateUser);
+router.delete('/delete', authenticateToken, deleteUser);
 
 module.exports = router;
