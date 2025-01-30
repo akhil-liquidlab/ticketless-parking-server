@@ -215,6 +215,13 @@ const deleteClassData = async (req, res) => {
 };
 
 const getAllClasses = async (req, res) => {
+    const {
+        page = 1,
+        limit = 10,
+        search,
+        disable_pagination = 'false'
+    } = req.query;
+
     try {
         // Fetch the global information
         const globalInfo = await Global.findOne();
@@ -223,20 +230,78 @@ const getAllClasses = async (req, res) => {
         }
 
         // Ensure `supported_classes` exists
-        if (!globalInfo.supported_classes || globalInfo.supported_classes.length === 0) {
+        const supportedClasses = globalInfo.supported_classes || [];
+
+        if (supportedClasses.length === 0) {
             return res.status(404).json({ message: 'No classes found.' });
         }
 
-        // Return all the classes
-        res.status(200).json({
+        // Filter classes based on search query
+        let filteredClasses = supportedClasses;
+        if (search) {
+            const searchRegex = new RegExp(search, 'i'); // Case-insensitive search
+            filteredClasses = supportedClasses.filter(
+                cls => searchRegex.test(cls.name) || searchRegex.test(cls.code)
+            );
+        }
+
+        // Check if pagination is disabled
+        const isPaginationDisabled = disable_pagination.toLowerCase() === 'true';
+
+        // Total records after filtering
+        const totalRecords = filteredClasses.length;
+
+        if (totalRecords === 0) {
+            return res.status(404).json({ message: 'No matching classes found.' });
+        }
+
+        let paginatedClasses = filteredClasses;
+        let totalPages = 1;
+
+        // Apply pagination if not disabled
+        if (!isPaginationDisabled) {
+            const pageNumber = parseInt(page, 10);
+            const limitNumber = parseInt(limit, 10);
+
+            if (isNaN(pageNumber) || isNaN(limitNumber) || pageNumber < 1 || limitNumber < 1) {
+                return res.status(400).json({ message: 'Invalid pagination parameters.' });
+            }
+
+            totalPages = Math.ceil(totalRecords / limitNumber);
+
+            if (pageNumber > totalPages) {
+                return res.status(404).json({ message: 'Page not found.' });
+            }
+
+            const startIndex = (pageNumber - 1) * limitNumber;
+            const endIndex = startIndex + limitNumber;
+
+            paginatedClasses = filteredClasses.slice(startIndex, endIndex);
+        }
+
+        // Construct response object
+        const response = {
             message: 'Classes fetched successfully.',
-            classes: globalInfo.supported_classes,
-        });
+            classes: paginatedClasses,
+        };
+
+        if (!isPaginationDisabled) {
+            response.pagination = {
+                totalRecords,
+                totalPages,
+                currentPage: parseInt(page, 10),
+                limit: parseInt(limit, 10),
+            };
+        }
+
+        res.status(200).json(response);
     } catch (error) {
         console.error('Error fetching classes:', error);
         res.status(500).json({ message: 'Error fetching classes.' });
     }
 };
+
+
 
 
 module.exports = { updateClassData, addClassData, deleteClassData, getAllClasses };

@@ -406,22 +406,88 @@ const deleteVehicle = async (req, res) => {
 
 // Get all registered vehicles
 const getAllRegisteredVehicles = async (req, res) => {
-    try {
-        const vehicles = await Vehicle.find({ registration_status: 'active' });
+    const {
+        page = 1,
+        limit = 10,
+        search,
+        disable_pagination = 'false',
+    } = req.query;
 
-        if (vehicles.length === 0) {
-            return res.status(404).json({ message: 'No active vehicles found' });
+    try {
+        // Fetch all active vehicles
+        let vehicles = await Vehicle.find({ registration_status: 'active' });
+
+        if (!vehicles || vehicles.length === 0) {
+            return res.status(404).json({ message: 'No active vehicles found.' });
         }
 
-        res.json({ vehicles });
+        // Filter vehicles based on the search query (matches vehicle_no or owner_name)
+        if (search) {
+            const searchRegex = new RegExp(search, 'i'); // Case-insensitive search
+            vehicles = vehicles.filter(vehicle =>
+                searchRegex.test(vehicle.vehicle_no) ||
+                searchRegex.test(vehicle.owner_first_name)
+            );
+        }
+
+        // Total records after filtering
+        const totalRecords = vehicles.length;
+
+        if (totalRecords === 0) {
+            return res.status(404).json({ message: 'No matching vehicles found.' });
+        }
+
+        // Check if pagination is disabled
+        const isPaginationDisabled = disable_pagination.toLowerCase() === 'true';
+
+        let paginatedVehicles = vehicles;
+        let totalPages = 1;
+
+        if (!isPaginationDisabled) {
+            const pageNumber = parseInt(page, 10);
+            const limitNumber = parseInt(limit, 10);
+
+            if (isNaN(pageNumber) || isNaN(limitNumber) || pageNumber < 1 || limitNumber < 1) {
+                return res.status(400).json({ message: 'Invalid pagination parameters.' });
+            }
+
+            totalPages = Math.ceil(totalRecords / limitNumber);
+
+            if (pageNumber > totalPages) {
+                return res.status(404).json({ message: 'Page not found.' });
+            }
+
+            const startIndex = (pageNumber - 1) * limitNumber;
+            const endIndex = startIndex + limitNumber;
+
+            paginatedVehicles = vehicles.slice(startIndex, endIndex);
+        }
+
+        // Construct response object
+        const response = {
+            message: 'Registered vehicles fetched successfully.',
+            vehicles: paginatedVehicles,
+        };
+
+        if (!isPaginationDisabled) {
+            response.pagination = {
+                totalRecords,
+                totalPages,
+                currentPage: parseInt(page, 10),
+                limit: parseInt(limit, 10),
+            };
+        }
+
+        res.status(200).json(response);
     } catch (error) {
-        console.error(error);
-        res.status(500).json({ message: 'Server error while fetching vehicles' });
+        console.error('Error fetching registered vehicles:', error);
+        res.status(500).json({ message: 'Error fetching registered vehicles.' });
     }
 };
 
-// Validate vehicle exit
-// Validate vehicle exit
+
+
+
 // Validate vehicle exit
 const validateVehicleExit = async (req, res) => {
     const { vehicle_no, is_paid } = req.body;
@@ -563,18 +629,74 @@ const calculateTariff = (durationInSeconds) => {
 
 // Get parking history for vehicles
 const getParkingHistory = async (req, res) => {
-    const { sort_order = 'desc' } = req.query; // Use query parameter to determine sorting order ('asc' or 'desc')
+    const {
+        sort_order = 'desc',
+        page = 1,
+        limit = 10,
+        from_date,
+        to_date,
+        search,
+        disable_pagination = 'false'
+    } = req.query;
 
     try {
-        // Fetch all parking history records
-        const parkingHistory = await ParkingHistory.find({}).sort({ entry_time: sort_order === 'asc' ? 1 : -1 });
-
-        // Check if there is any parking history
-        if (!parkingHistory || parkingHistory.length === 0) {
-            return handleError(res, 'No parking history found', null, 404);
+        // Build the query filter
+        const query = {};
+        if (from_date) {
+            query.entry_time = { $gte: new Date(from_date) };
+        }
+        if (to_date) {
+            if (!query.entry_time) {
+                query.entry_time = {};
+            }
+            query.entry_time.$lte = new Date(to_date);
         }
 
-        // Map the data to return the desired details
+        // If search is provided, do a case-insensitive "like" search on vehicle_no
+        if (search) {
+            query.vehicle_no = { $regex: new RegExp(search, 'i') }; // Case-insensitive substring search
+        }
+
+        // Determine if pagination is disabled
+        const isPaginationDisabled = disable_pagination.toLowerCase() === 'true';
+
+        // Get total count of records that match the query
+        const totalRecords = await ParkingHistory.countDocuments(query);
+
+        if (totalRecords === 0) {
+            return res.status(404).json({ message: 'No parking history found.' });
+        }
+
+        // If pagination is enabled, calculate the necessary details
+        let totalPages = 1;
+        let parkingHistory;
+
+        if (!isPaginationDisabled) {
+            const pageNumber = parseInt(page, 10);
+            const limitNumber = parseInt(limit, 10);
+
+            if (isNaN(pageNumber) || isNaN(limitNumber) || pageNumber < 1 || limitNumber < 1) {
+                return res.status(400).json({ message: 'Invalid pagination parameters.' });
+            }
+
+            totalPages = Math.ceil(totalRecords / limitNumber);
+
+            if (pageNumber > totalPages) {
+                return res.status(404).json({ message: 'Page not found.' });
+            }
+
+            // Fetch paginated records
+            parkingHistory = await ParkingHistory.find(query)
+                .sort({ entry_time: sort_order === 'asc' ? 1 : -1 })
+                .skip((pageNumber - 1) * limitNumber)
+                .limit(limitNumber);
+        } else {
+            // Fetch all records without pagination
+            parkingHistory = await ParkingHistory.find(query)
+                .sort({ entry_time: sort_order === 'asc' ? 1 : -1 });
+        }
+
+        // Format the data for the response
         const formattedHistory = parkingHistory.map((history) => ({
             vehicle_no: history.vehicle_no,
             class_code: history.class_code,
@@ -584,16 +706,29 @@ const getParkingHistory = async (req, res) => {
             tariff: history.tariff,
         }));
 
-        // Return the parking history
-        res.json({
+        // Construct the response object
+        const response = {
+            message: 'Parking history fetched successfully.',
             vehicles: formattedHistory,
-        });
+        };
 
+        if (!isPaginationDisabled) {
+            response.pagination = {
+                totalRecords,
+                totalPages,
+                currentPage: parseInt(page, 10),
+                limit: parseInt(limit, 10),
+            };
+        }
+
+        res.status(200).json(response);
     } catch (error) {
-        console.error(error);
-        return handleError(res, 'Error fetching parking history', error, 500);
+        console.error('Error fetching parking history:', error);
+        return res.status(500).json({ message: 'Error fetching parking history.' });
     }
 };
+
+
 
 
 
