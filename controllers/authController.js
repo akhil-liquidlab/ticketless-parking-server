@@ -1,6 +1,9 @@
 const User = require('../models/userModel.js');
 const { generateToken } = require('../utils/jwtUtils.js');
+const jwt = require('jsonwebtoken'); // Import JWT to verify tokens
+const { SECRET_KEY } = require('../utils/jwtUtils');
 
+// Login method
 const login = async (req, res) => {
     const { username, password } = req.body;
 
@@ -70,4 +73,31 @@ const deleteUser = async (req, res) => {
     }
 };
 
-module.exports = { login, registerUser, updateUser, deleteUser };
+// Get current user details
+const getCurrentUserDetails = async (req, res) => {
+    try {
+        // Get the token from the request header
+        const token = req.header('Authorization')?.replace('Bearer ', ''); // Assuming Bearer token
+        if (!token) {
+            return res.status(401).json({ message: 'Access denied. No token provided.' });
+        }
+
+        // Verify the token and decode the user information
+        const decoded = jwt.verify(token, SECRET_KEY); // Replace with your JWT secret key
+        const userId = decoded.userId; // Assuming the user ID is saved in the token
+
+        // Fetch the current user's details from the database
+        const user = await User.findById(userId).select('-password'); // Select all fields except password
+        if (!user) {
+            return res.status(404).json({ message: 'User not found' });
+        }
+
+        // Return the user details
+        res.json({ user });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: 'Error fetching user details' });
+    }
+};
+
+module.exports = { login, registerUser, updateUser, deleteUser, getCurrentUserDetails };
