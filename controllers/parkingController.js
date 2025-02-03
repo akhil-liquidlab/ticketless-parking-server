@@ -4,6 +4,8 @@ const ParkingHistory = require('../models/parkingHistoryModel');
 const { handleSuccess, handleError } = require('../utils/responseUtils.js');
 const moment = require('moment');
 
+
+
 // Register a new vehicle
 const registerVehicle = async (req, res) => {
     const { vehicle_no, vehicle_type, owner_first_name, owner_last_name, class_code } = req.body;
@@ -30,58 +32,94 @@ const registerVehicle = async (req, res) => {
             return res.status(500).json({ message: 'Global data not found. Please contact the administrator.' });
         }
 
-        // Check if the class_code is valid and active
-        const classInfo = globalInfo.supported_classes.find(cls => cls.code === class_code);
-        if (!classInfo) {
-            return res.status(400).json({ message: `Invalid class code "${class_code}". Please choose a valid class.` });
-        }
+        // If class_code is public, consider it as unregistered and treat it differently
+        let renewal_type, renewal_charge, expirationDate;
 
-        // Ensure the class status is active
-        if (classInfo.status !== 'active') {
-            return res.status(400).json({
-                message: `The class status is "${classInfo.status}", which is not active. Vehicle cannot be registered.`,
-            });
-        }
-
-        // Check for duplicate vehicle registration number
-        const existingVehicle = await Vehicle.findOne({ vehicle_no });
-        if (existingVehicle) {
-            return res.status(409).json({
-                message: `A vehicle with the registration number "${vehicle_no}" already exists. Please verify the number.`,
-            });
-        }
-
-        // Get renewal details dynamically from the class
-        const renewal_type = classInfo.renewal_type;
-        const renewal_charge = classInfo.renewal_charge;
-
-        // Calculate the expiration date based on renewal type
-        const currentDate = new Date();
-        let expirationDate;
-        if (renewal_type === 'monthly') {
-            expirationDate = new Date(currentDate.setMonth(currentDate.getMonth() + 1)); // 1 month from today
-        } else if (renewal_type === 'yearly') {
-            expirationDate = new Date(currentDate.setFullYear(currentDate.getFullYear() + 1)); // 1 year from today
+        if (class_code === 'public') {
+            // If it's public, don't check for class existence or active status, just treat it as unregistered
+            renewal_type = null;  // No renewal for public vehicles
+            renewal_charge = 0;   // No charge for public vehicles
+            expirationDate = null; // No expiration date for public vehicles
         } else {
-            expirationDate = new Date(currentDate.setFullYear(currentDate.getFullYear() + 1)); // Default to 1 year
+            // Check if the class_code is valid and active for non-public vehicles
+            const classInfo = globalInfo.supported_classes.find(cls => cls.code === class_code);
+            if (!classInfo) {
+                return res.status(400).json({ message: `Invalid class code "${class_code}". Please choose a valid class.` });
+            }
+
+            // Ensure the class status is active
+            if (classInfo.status !== 'active') {
+                return res.status(400).json({
+                    message: `The class status is "${classInfo.status}", which is not active. Vehicle cannot be registered.`,
+                });
+            }
+
+            // Get renewal details dynamically from the class
+            renewal_type = classInfo.renewal_type;
+            renewal_charge = classInfo.renewal_charge;
+
+            // Calculate the expiration date based on renewal type
+            const currentDate = new Date();
+            if (renewal_type === 'monthly') {
+                expirationDate = new Date(currentDate.setMonth(currentDate.getMonth() + 1)); // 1 month from today
+            } else if (renewal_type === 'yearly') {
+                expirationDate = new Date(currentDate.setFullYear(currentDate.getFullYear() + 1)); // 1 year from today
+            } else {
+                expirationDate = new Date(currentDate.setFullYear(currentDate.getFullYear() + 1)); // Default to 1 year
+            }
         }
 
-        // Create the vehicle entry without unnecessary fields
+        // Check if a vehicle with the registration number already exists
+        const existingVehicle = await Vehicle.findOne({ vehicle_no });
+
+        if (existingVehicle) {
+            if (existingVehicle.class_code === 'public') {
+                // If the existing vehicle is public, update the owner details and the class code
+                existingVehicle.class_code = class_code;
+                existingVehicle.owner_first_name = owner_first_name;
+                existingVehicle.owner_last_name = owner_last_name;
+                existingVehicle.ending_date = expirationDate; // Set the new expiration date if applicable
+                existingVehicle.renewal_type = renewal_type; // Update renewal type if applicable
+                existingVehicle.renewal_charge = renewal_charge; // Update renewal charge if applicable
+
+                // Save the updated vehicle
+                await existingVehicle.save();
+
+                return res.status(200).json({
+                    message: `Vehicle ${vehicle_no} successfully registered as ${class_code}.`,
+                    registration_id: existingVehicle._id,
+                    vehicle_no: existingVehicle.vehicle_no,
+                    vehicle_type: existingVehicle.vehicle_type,
+                    owner_first_name: existingVehicle.owner_first_name,
+                    owner_last_name: existingVehicle.owner_last_name,
+                    class_code: existingVehicle.class_code,
+                    ending_date: existingVehicle.ending_date,
+                    renewal_type: existingVehicle.renewal_type,
+                    renewal_charge: existingVehicle.renewal_charge,
+                });
+            } else {
+                return res.status(409).json({
+                    message: `A vehicle with the registration number "${vehicle_no}" already exists in class "${existingVehicle.class_code}". Please verify the number.`,
+                });
+            }
+        }
+
+        // Create the vehicle entry with the data from the request body and dynamic values
         const newVehicle = new Vehicle({
             vehicle_no,
             vehicle_type,
             owner_first_name,
             owner_last_name,
             class_code,
-            ending_date: expirationDate, // Store expiration date
-            renewal_type, // Store renewal type from class
-            renewal_charge, // Store renewal charge from class
+            ending_date: expirationDate, // Store expiration date (null for public)
+            renewal_type, // Store renewal type from class (null for public)
+            renewal_charge, // Store renewal charge from class (0 for public)
         });
 
         // Save the vehicle to the database
         await newVehicle.save();
 
-        // Return the full vehicle details in the response, including dynamic renewal info
+        // Return the full vehicle details in the response
         res.status(201).json({
             registration_id: newVehicle._id,
             vehicle_no: newVehicle.vehicle_no,
@@ -117,17 +155,13 @@ const registerVehicle = async (req, res) => {
 
 
 
-
-
-
 // module.exports = { registerVehicle };
 
 
 // Update an existing vehicle's registration
 const updateVehicle = async (req, res) => {
-    const { registration_id } = req.params;
+    const { registration_id, vehicle_no } = req.query;  // Registration ID and Vehicle No. in params
     const {
-        vehicle_no,
         vehicle_type,
         owner_first_name,
         owner_last_name,
@@ -139,21 +173,26 @@ const updateVehicle = async (req, res) => {
     } = req.body;
 
     try {
-        // Validate that registration_id is provided
-        if (!registration_id) {
-            return res.status(400).json({ message: 'Registration ID is required' });
+        // Validate that at least registration_id or vehicle_no is provided
+        if (!registration_id && !vehicle_no) {
+            return res.status(400).json({ message: 'Either Registration ID or Vehicle No. is required' });
         }
 
-        // Find the vehicle by registration_id
-        const vehicle = await Vehicle.findById(registration_id);
+        // Find the vehicle by registration_id or vehicle_no (case-insensitive)
+        let vehicle;
+        if (registration_id) {
+            vehicle = await Vehicle.findById(registration_id);
+        } else if (vehicle_no) {
+            vehicle = await Vehicle.findOne({ vehicle_no: { $regex: new RegExp(`^${vehicle_no}$`, 'i') } }); // Case insensitive match
+        }
+
         if (!vehicle) {
-            return res.status(404).json({ message: 'Vehicle not found with the provided registration ID' });
+            return res.status(404).json({ message: 'Vehicle not found with the provided details' });
         }
 
         // Prepare fields to be updated
         const updatedFields = {};
 
-        if (vehicle_no) updatedFields.vehicle_no = vehicle_no;
         if (vehicle_type) updatedFields.vehicle_type = vehicle_type;
         if (owner_first_name) updatedFields.owner_first_name = owner_first_name;
         if (owner_last_name) updatedFields.owner_last_name = owner_last_name;
@@ -170,10 +209,10 @@ const updateVehicle = async (req, res) => {
         }
 
         // Update the vehicle
-        await Vehicle.findByIdAndUpdate(registration_id, updatedFields, { new: true });
+        await Vehicle.findByIdAndUpdate(vehicle._id, updatedFields, { new: true });
 
         // Return updated vehicle data
-        const updatedVehicle = await Vehicle.findById(registration_id);
+        const updatedVehicle = await Vehicle.findById(vehicle._id);
 
         res.json({
             registration_id: updatedVehicle._id,
@@ -229,17 +268,25 @@ const calculateExpirationInSeconds = (effective_from_date, renewal_type) => {
     }
 };
 
+
 const validateVehicleEntry = async (req, res) => {
-    const { vehicle_no, entry_time } = req.body;
+    const { vehicle_no, entry_time, vehicle_type } = req.body;
+    const io = req.app.locals.io;
+
+
 
     if (!vehicle_no) {
+        io.emit('error', 'No vehicle number found');
         return res.status(403).json({ message: "No vehicle number found" });
     }
+
+
 
     try {
         // Fetch GlobalData from the database
         const globalData = await GlobalModel.findOne();
         if (!globalData) {
+            io.emit('failed', 'Global parking data is not initialized.');
             return res.status(500).json({
                 screen_message_type: 'error',
                 screen_title: 'Configuration Error',
@@ -248,11 +295,14 @@ const validateVehicleEntry = async (req, res) => {
             });
         }
 
+        io.emit('event', 'Validating Entry');
+
         // Fetch vehicle from the database
-        const vehicle = await Vehicle.findOne({ vehicle_no });
+        let vehicle = await Vehicle.findOne({ vehicle_no });
 
         // Handle Blacklisted Vehicle
         if (vehicle && vehicle.is_blacklisted) {
+            io.emit('failed', `Vehicle ${vehicle_no} is blacklisted and cannot enter.`);
             return res.status(403).json({
                 screen_message_type: 'error',
                 screen_title: 'Access Denied',
@@ -263,6 +313,7 @@ const validateVehicleEntry = async (req, res) => {
 
         // Handle Duplicate Entry
         if (vehicle && vehicle.status === 'parked') {
+            io.emit('failed', `Vehicle ${vehicle_no} is already parked.`);
             return res.status(400).json({
                 screen_message_type: 'error',
                 screen_title: 'Duplicate Entry',
@@ -271,14 +322,15 @@ const validateVehicleEntry = async (req, res) => {
             });
         }
 
-        // If it's an unregistered vehicle, it can park in the public slots
-        if (!vehicle) {
-            // Check if there are available public parking slots
+        // For Unregistered Vehicle or Vehicle with "public" class code
+        if (!vehicle || vehicle.class_code === 'public') {
+            // Check availability of public slots
             if (globalData.public_slots.occupied >= globalData.public_slots.total) {
+                io.emit('failed', 'No available public parking slots for vehicles with public class.');
                 return res.status(400).json({
                     screen_message_type: 'error',
                     screen_title: 'No Public Slots Available',
-                    screen_message: 'No available public parking slots for unregistered vehicles.',
+                    screen_message: 'No available public parking slots for vehicles with public class.',
                     barrier_status: 'closed',
                 });
             }
@@ -286,48 +338,52 @@ const validateVehicleEntry = async (req, res) => {
             // Increment public slot usage
             globalData.public_slots.occupied++;
             globalData.public_slots.available = globalData.public_slots.total - globalData.public_slots.occupied;
-            globalData.occupied_slots++; // Increment total occupied slots
+            globalData.occupied_slots++;
             globalData.available_slots = globalData.total_parking_slots - globalData.occupied_slots;
 
             // Save updated global data
             await globalData.save();
 
-            // Add unregistered vehicle to the Vehicle collection with default values
-            const newVehicle = new Vehicle({
-                vehicle_no,
-                status: 'parked',
-                starting_date: entry_time || new Date().toISOString(),
-                class_code: 'public', // Or some default class code for unregistered vehicles
-                effective_from_date: new Date().toISOString(), // Set effective_from_date to current date for unregistered vehicles
-                renewal_type: null, // Set renewal_type to null
-                renewal_charge: 0, // Set renewal_charge to 0 for unregistered vehicles
-                owner_first_name: null, // Set owner info to null
-                owner_last_name: null,
-                vehicle_type: null, // Set vehicle_type to null
-            });
+            // If vehicle is unregistered, add it to the database
+            if (!vehicle) {
+                vehicle = new Vehicle({
+                    vehicle_no,
+                    vehicle_type: vehicle_type || "unknown", // Collect from frontend or default to "unknown"
+                    status: 'parked',
+                    starting_date: entry_time || new Date().toISOString(),
+                    class_code: 'public', // Default to 'public' for unregistered vehicles
+                    effective_from_date: new Date().toISOString(),
+                    renewal_type: null,
+                    renewal_charge: 0,
+                    owner_first_name: null,
+                    owner_last_name: null,
+                });
 
-            // Save the new vehicle data
-            await newVehicle.save();
-
-            // Success Response for unregistered vehicle entry
+                await vehicle.save();
+            } else {
+                // If vehicle exists but has "public" class code, update its status
+                vehicle.status = 'parked';
+                vehicle.starting_date = entry_time || new Date().toISOString();
+                await vehicle.save();
+            }
+            io.emit('success', `Vehicle ${vehicle_no} has been validated for entry.`);
             return res.status(200).json({
                 screen_message_type: 'success',
-                screen_title: 'Unregistered Vehicle Entry Validated',
-                screen_message: `Unregistered vehicle ${vehicle_no} has been validated for entry.`,
+                screen_title: 'Public Vehicle Entry Validated',
+                screen_message: `Vehicle ${vehicle_no} has been validated for entry.`,
                 barrier_status: 'open',
                 max_waiting_duration: 30,
-                entry_time: newVehicle.starting_date,
-                class_code: newVehicle.class_code,
-                globalData,
+                entry_time: vehicle.starting_date,
+                class_code: 'public',
             });
         }
 
-        // For Registered Vehicle
+        // For Registered Vehicle with valid class codes
         const class_code = vehicle.class_code;
-
-        // Check Class Capacity for registered vehicle
         const parkingClass = globalData.supported_classes.find(cls => cls.code === class_code);
+
         if (!parkingClass) {
+            io.emit('failed', `Class code ${class_code} is not supported.`);
             return res.status(400).json({
                 screen_message_type: 'error',
                 screen_title: 'Invalid Class Code',
@@ -337,6 +393,7 @@ const validateVehicleEntry = async (req, res) => {
         }
 
         if (parkingClass.slots_used >= parkingClass.slots_reserved) {
+            io.emit('failed', `No parking slots available for class ${class_code}.`);
             return res.status(400).json({
                 screen_message_type: 'error',
                 screen_title: 'Class Full',
@@ -350,15 +407,13 @@ const validateVehicleEntry = async (req, res) => {
         globalData.occupied_slots++;
         globalData.available_slots = globalData.total_parking_slots - globalData.occupied_slots;
 
-        // Save updated global data
         await globalData.save();
 
         // Update vehicle status for registered vehicle
         vehicle.status = 'parked';
         vehicle.starting_date = entry_time || new Date().toISOString();
         await vehicle.save();
-
-        // Success Response for registered vehicle entry
+        io.emit('success', `Vehicle ${vehicle_no} has been validated for entry.`);
         return res.status(200).json({
             screen_message_type: 'success',
             screen_title: 'Vehicle Entry Validated',
@@ -367,9 +422,9 @@ const validateVehicleEntry = async (req, res) => {
             max_waiting_duration: 30,
             entry_time: vehicle.starting_date,
             class_code: vehicle.class_code,
-            globalData,
         });
     } catch (error) {
+        io.emit('error', 'There was an issue validating vehicle entry.');
         console.error("Error during validation:", error);
         return res.status(500).json({
             screen_message_type: 'error',
@@ -379,6 +434,7 @@ const validateVehicleEntry = async (req, res) => {
         });
     }
 };
+
 
 
 
@@ -489,75 +545,156 @@ const getAllRegisteredVehicles = async (req, res) => {
 
 
 // Validate vehicle exit
+// Validate vehicle exit
 const validateVehicleExit = async (req, res) => {
     const { vehicle_no, is_paid } = req.body;
+    const io = req.app.locals.io;  // Access the io instance
 
     try {
         // Find the vehicle by vehicle_no
         const vehicle = await Vehicle.findOne({ vehicle_no });
 
         if (!vehicle) {
+            io.emit('error', 'Vehicle not found');
             return handleError(res, 'Vehicle not found', null, 404);
         }
 
         // Check if the vehicle is blacklisted
         if (vehicle.is_blacklisted) {
+            io.emit('failed', 'Vehicle is blacklisted and cannot exit');
             return handleError(res, 'Vehicle is blacklisted and cannot exit', null, 403);
         }
 
         // Check if the vehicle is already exited
         if (vehicle.status === 'exited') {
+            io.emit('failed', 'Vehicle has already exited');
             return handleError(res, 'Vehicle has already exited', null, 400);
         }
 
         // Check if the vehicle is parked
         if (vehicle.status !== 'parked') {
+            io.emit('failed', 'Vehicle is not currently parked');
             return handleError(res, 'Vehicle is not currently parked', null, 400);
         }
 
-        // Fetch the global model data to get amount_per_minute
+        // Fetch the global model data
         const globalData = await GlobalModel.findOne();
 
         if (!globalData) {
+            io.emit('failed', 'Global data not found');
             return handleError(res, 'Global data not found', null, 500);
         }
 
-        // Fetch the class info for the vehicle
-        const classInfo = globalData.supported_classes.find(cls => cls.code === vehicle.class_code);
-        if (!classInfo) {
-            return handleError(res, `Class code "${vehicle.class_code}" not found`, null, 400);
-        }
-
-        // Calculate parking duration (in seconds)
         const exit_time = new Date(); // Current exit time
         const parking_duration = Math.floor((exit_time - vehicle.starting_date) / 1000); // In seconds
+        const parking_duration_in_minutes = Math.ceil(parking_duration / 60); // Convert to minutes (rounded up)
 
-        const amount_per_minute = globalData.amount_per_minute;
+        // Initialize pricing details
+        const first_one_hour_charges = globalData.first_one_hour_charges;
+        const additional_charges = globalData.additional_charges;
 
-        // Calculate the tariff based on amount_per_minute (convert seconds to minutes)
-        const parking_duration_in_minutes = parking_duration / 60; // Convert seconds to minutes
-        const tariff_amount = parking_duration_in_minutes * amount_per_minute;
-
-        // Check if the class is active
+        let tariff_amount = 0;
         let amount_due = 0;
+        let is_class_active = false;
 
-        if (classInfo.status !== 'active') {
-            // If the class is not active, the user has to pay the tariff
-            amount_due = is_paid ? 0 : tariff_amount;
-        } else {
-            // If the class is active, there is no fee for registered vehicles
-            amount_due = 0; // Registered vehicles should have no fee
+        // Determine vehicle type (default to 4-wheeler if unknown)
+        const vehicle_type = vehicle.vehicle_type || '4';
+        const charge_info = additional_charges.get(vehicle_type);  // Get charge info from Map
+
+        if (!charge_info) {
+            io.emit('error', `No pricing configuration found for vehicle type "${vehicle_type}"`);
+            return handleError(
+                res,
+                `No pricing configuration found for vehicle type "${vehicle_type}"`,
+                null,
+                400
+            );
         }
+
+        const { interval_minutes, amount_per_interval } = charge_info;
+
+        // Fetch the first hour charges for the given vehicle type
+        const first_hour_amount = first_one_hour_charges.get(vehicle_type) || 0;
+
+        // Calculate tariff based on parking duration
+        if (parking_duration_in_minutes <= 60) {
+            // First hour pricing
+            tariff_amount = first_hour_amount;
+        } else {
+            // Beyond first hour
+            const additional_minutes = parking_duration_in_minutes - 60;
+            const additional_intervals = Math.ceil(additional_minutes / interval_minutes);
+            tariff_amount = first_hour_amount + additional_intervals * amount_per_interval;
+        }
+
+        if (vehicle.class_code && vehicle.class_code !== 'public') {
+            // Handle registered vehicles
+            const classInfo = globalData.supported_classes.find(cls => cls.code === vehicle.class_code);
+
+            if (!classInfo) {
+                io.emit('failed', `Class code "${vehicle.class_code}" not found`);
+                return handleError(res, `Class code "${vehicle.class_code}" not found`, null, 400);
+            }
+
+            // Check if the class is active
+            is_class_active = classInfo.status === 'active';
+
+            // If the class is active, parking is free
+            if (is_class_active) {
+                amount_due = 0;
+            } else {
+                // For inactive classes, payment is required unless already paid
+                amount_due = is_paid ? 0 : tariff_amount;
+            }
+
+            // Decrement class-specific slot usage if applicable
+            if (classInfo.slots_used > 0) {
+                classInfo.slots_used--;
+                await classInfo.save();  // Save updated class info
+            }
+        } else {
+            // Handle public parking (unregistered vehicles)
+            amount_due = is_paid ? 0 : tariff_amount;
+
+            if (!is_paid) {
+                // If not paid for public parking, barrier stays closed
+                io.emit('failed', `Payment Required for vehicle ${vehicle_no}.\n Amount payable: ${amount_due}`);
+                return res.status(403).json({
+                    screen_message_type: "error",
+                    screen_title: "Payment Required",
+                    screen_message: "Please pay the parking fee to exit.",
+                    barrier_status: "closed",
+                    tariff: {
+                        total_amount: tariff_amount,
+                        amount_payable: amount_due,
+                    },
+                });
+            }
+
+            // Update the public parking slots if payment is made
+            if (globalData.public_slots.occupied > 0) {
+                globalData.public_slots.occupied--;
+                globalData.public_slots.available = globalData.public_slots.total - globalData.public_slots.occupied;
+                await globalData.save();  // Save updated global data
+            }
+        }
+
+        // Update global parking data
+        globalData.occupied_slots--;
+        globalData.available_slots = globalData.total_parking_slots - globalData.occupied_slots;
+
+        // Save the updated global data
+        await globalData.save();
 
         // Add a new parking history entry
         const newParkingHistory = new ParkingHistory({
             vehicle_no: vehicle.vehicle_no,
-            class_code: vehicle.class_code,
+            class_code: vehicle.class_code || 'public', // Default to 'public' if no class_code
             entry_time: vehicle.starting_date,
             exit_time: exit_time,
             parking_duration: parking_duration,
             tariff: {
-                gst: 0, // Assuming GST is calculated elsewhere or can be added here
+                gst: 0, // Assuming GST is calculated elsewhere
                 total_amount: tariff_amount,
                 discount_amount: 0, // Add any applicable discounts here
                 discount_percentage: 0, // Add discount percentage if applicable
@@ -575,6 +712,9 @@ const validateVehicleExit = async (req, res) => {
         // Save the updated vehicle information
         await vehicle.save();
 
+        // Emit success message via socket
+        io.emit('success', `Vehicle ${vehicle_no} has successfully exited`);
+
         // Return success response
         res.json({
             screen_message_type: "success",
@@ -587,17 +727,15 @@ const validateVehicleExit = async (req, res) => {
                 total_amount: tariff_amount,
                 amount_payable: amount_due,
             },
-            class_code: vehicle.class_code,
+            class_code: vehicle.class_code || 'public',
         });
 
     } catch (error) {
+        io.emit('error', 'Error validating vehicle exit');
         console.error(error);
         return handleError(res, 'Error validating vehicle exit', error, 500);
     }
 };
-
-
-
 
 
 

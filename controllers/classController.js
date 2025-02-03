@@ -2,7 +2,6 @@
 const Global = require('../models/globalModel.js');
 
 // Update an existing class
-// Update an existing class
 const updateClassData = async (req, res) => {
     const { code, slots_reserved, slots_used, name, renewal_type, renewal_charge, status, starting_date, ending_date } = req.body;
 
@@ -10,11 +9,6 @@ const updateClassData = async (req, res) => {
         const globalInfo = await Global.findOne();
         if (!globalInfo) {
             return res.status(404).json({ message: 'Global data not found.' });
-        }
-
-        // Ensure `supported_classes` is initialized as an array
-        if (!globalInfo.supported_classes) {
-            globalInfo.supported_classes = [];
         }
 
         // Find the class to update
@@ -28,10 +22,16 @@ const updateClassData = async (req, res) => {
 
         // Update fields if provided
         if (slots_reserved !== undefined) {
+            if (slots_reserved < 0) {
+                return res.status(400).json({ message: 'Slots reserved cannot be negative.' });
+            }
             classToUpdate.slots_reserved = slots_reserved;
         }
 
         if (slots_used !== undefined) {
+            if (slots_used < 0) {
+                return res.status(400).json({ message: 'Slots used cannot be negative.' });
+            }
             if (slots_used > classToUpdate.slots_reserved) {
                 return res.status(400).json({ message: 'Slots used cannot exceed slots reserved.' });
             }
@@ -44,47 +44,27 @@ const updateClassData = async (req, res) => {
 
         // Handle status and validate renewal_type and renewal_charge if status is 'active'
         if (status) {
+            classToUpdate.status = status;
+
             if (status === 'active') {
                 if (!renewal_type || !renewal_charge) {
                     return res.status(400).json({ message: 'For active classes, both renewal_type and renewal_charge are required.' });
                 }
 
-                // Check for missing starting_date and ending_date when status is 'active'
                 if (!starting_date || !ending_date) {
                     return res.status(400).json({ message: 'For active classes, both starting_date and ending_date are required.' });
                 }
-            }
-            classToUpdate.status = status;
-        }
 
-        if (renewal_type) {
-            classToUpdate.renewal_type = renewal_type;
-        }
-
-        if (renewal_charge) {
-            classToUpdate.renewal_charge = renewal_charge;
-        }
-
-        // Only update starting_date and ending_date if class status is active
-        if (status === 'active') {
-            if (starting_date) {
+                classToUpdate.renewal_type = renewal_type;
+                classToUpdate.renewal_charge = renewal_charge;
                 classToUpdate.starting_date = starting_date;
-            }
-            if (ending_date) {
                 classToUpdate.ending_date = ending_date;
-            }
-            if (starting_date && ending_date) {
-                const start = new Date(starting_date);
-                const end = new Date(ending_date);
-
-                // Calculate the difference in milliseconds
-                const diffInMs = end - start;
-
-                // Calculate the difference in days
-                const diffInDays = diffInMs / (1000 * 3600 * 24);
-
-                // Add the expiring_in field to the class
-                classToUpdate.expiring_in = Math.floor(diffInDays);
+            } else {
+                // If status is not active, clear renewal_type, renewal_charge, starting_date, and ending_date
+                classToUpdate.renewal_type = undefined;
+                classToUpdate.renewal_charge = undefined;
+                classToUpdate.starting_date = undefined;
+                classToUpdate.ending_date = undefined;
             }
         }
 
@@ -102,10 +82,8 @@ const updateClassData = async (req, res) => {
 };
 
 
-
-
 const addClassData = async (req, res) => {
-    const { code, name, slots_reserved, slots_used, renewal_type, renewal_charge, status, starting_date, ending_date } = req.body;
+    const { code, name, slots_reserved, slots_used, renewal_type, renewal_charge, status, starting_date } = req.body;
 
     try {
         const globalInfo = await Global.findOne();
@@ -113,7 +91,7 @@ const addClassData = async (req, res) => {
             return res.status(404).json({ message: 'Global data not found.' });
         }
 
-        // Ensure `supported_classes` is initialized as an array
+        // Ensure supported_classes is initialized as an array
         if (!globalInfo.supported_classes) {
             globalInfo.supported_classes = [];
         }
@@ -131,32 +109,33 @@ const addClassData = async (req, res) => {
             return res.status(400).json({ message: 'Slots values cannot be negative.' });
         }
 
-        // Validate renewal_type, renewal_charge, starting_date, and ending_date only if the class is active
+        let ending_date;
+
+        // Validate renewal_type, renewal_charge, and starting_date only if the class is active
         if (status === 'active') {
-            if (!renewal_type || !renewal_charge) {
-                return res.status(400).json({ message: 'For active classes, both renewal_type and renewal_charge are required.' });
+            if (!renewal_type || !renewal_charge || !starting_date) {
+                return res.status(400).json({ message: 'For active classes, renewal_type, renewal_charge, and starting_date are required.' });
             }
 
-            // Check for missing starting_date and ending_date
-            if (!starting_date || !ending_date) {
-                return res.status(400).json({ message: 'For active classes, both starting_date and ending_date are required.' });
-            }
-
-            // Calculate expiring_in if starting_date and ending_date are provided
             const start = new Date(starting_date);
-            const end = new Date(ending_date);
 
-            // Calculate the difference in milliseconds
-            const diffInMs = end - start;
-
-            // Calculate the difference in days
-            const diffInDays = diffInMs / (1000 * 3600 * 24);
-
-            // Add the expiring_in field to the new class
-            var expiring_in = `${Math.floor(diffInDays)} days`; // Calculate days difference
+            // Calculate ending_date based on renewal_type
+            switch (renewal_type) {
+                case 'monthly':
+                    ending_date = new Date(start.setMonth(start.getMonth() + 1));
+                    break;
+                case 'yearly':
+                    ending_date = new Date(start.setFullYear(start.getFullYear() + 1));
+                    break;
+                case 'weekly':
+                    ending_date = new Date(start.setDate(start.getDate() + 7));
+                    break;
+                default:
+                    return res.status(400).json({ message: 'Invalid renewal_type.' });
+            }
         }
 
-        // Add new class with starting_date, ending_date, and calculated expiring_in
+        // Add new class with starting_date and calculated ending_date
         const newClass = {
             code,
             name,
@@ -166,8 +145,8 @@ const addClassData = async (req, res) => {
             renewal_charge,
             status,
             starting_date,
-            ending_date,
-            expiring_in,  // Add the calculated expiring_in field
+            ending_date, // Use the calculated ending_date
+            // expiring_in will be calculated automatically by Mongoose
         };
 
         // Add the new class to the global data

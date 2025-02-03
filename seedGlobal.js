@@ -50,7 +50,16 @@ const seedGlobal = async () => {
                 available: 300, // public_slots.total - public_slots.occupied
             },
             supported_classes: [], // No classes by default
-            amount_per_minute: 2.5, // Add this field to resolve the validation error
+            first_one_hour_charges: { // Now using the Map for vehicle-specific charges
+                '2': 20, // 2-wheeler: ₹20
+                '3': 30, // 3-wheeler: ₹30
+                '4': 40, // 4-wheeler: ₹40
+            },
+            additional_charges: {
+                '4': { interval_minutes: 5, amount_per_interval: 2.5 }, // For 4-wheelers
+                '3': { interval_minutes: 5, amount_per_interval: 2.0 }, // For 3-wheelers
+                '2': { interval_minutes: 5, amount_per_interval: 1.5 }, // For 2-wheelers
+            },
             created_date: new Date(),
             last_updated_date: new Date(),
         });

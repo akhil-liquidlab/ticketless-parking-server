@@ -21,7 +21,7 @@ router.post('/out/validate', authenticateToken, validateVehicleExit);
 router.post('/register', authenticateToken, registerVehicle);
 
 // Route to update vehicle details
-router.put('/vehicles/:registration_id', authenticateToken, updateVehicle);
+router.put('/vehicles', authenticateToken, updateVehicle);
 
 // Route to get all registered vehicles
 router.get('/vehicles', authenticateToken, getAllRegisteredVehicles);
