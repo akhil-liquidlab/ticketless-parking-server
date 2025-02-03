@@ -3,6 +3,7 @@ const GlobalModel = require('../models/globalModel');
 const ParkingHistory = require('../models/parkingHistoryModel');
 const { handleSuccess, handleError } = require('../utils/responseUtils.js');
 const moment = require('moment');
+const Booth = require('../models/boothModel');
 
 
 
@@ -268,25 +269,77 @@ const calculateExpirationInSeconds = (effective_from_date, renewal_type) => {
     }
 };
 
+// Helper function to emit to booth displays
+const emitToBoothDisplays = (io, booth, eventName, message) => {
+    if (!booth || !booth.devices) return;
+
+    const displayDevices = booth.devices.filter(device => 
+        device.device_type === 'display' && device.socket_id
+    );
+
+    displayDevices.forEach(device => {
+        if (device.socket_id) {
+            console.log(`Emitting ${eventName} to device ${device.device_id} in booth ${booth.booth_code}`);
+            io.to(device.socket_id).emit(eventName, message);
+        }
+    });
+};
 
 const validateVehicleEntry = async (req, res) => {
-    const { vehicle_no, entry_time, vehicle_type } = req.body;
+    const { vehicle_no, entry_time, vehicle_type, booth_code } = req.body;
     const io = req.app.locals.io;
 
-
-
     if (!vehicle_no) {
-        io.emit('error', 'No vehicle number found');
+        emitToBoothDisplays(io, null, 'error', 'No vehicle number found');
         return res.status(403).json({ message: "No vehicle number found" });
     }
 
-
+    if (!booth_code) {
+        emitToBoothDisplays(io, null, 'error', 'No booth code provided');
+        return res.status(403).json({ message: "Booth code is required" });
+    }
 
     try {
+        // Validate booth first
+        const booth = await Booth.findOne({ 
+            booth_code: { $regex: new RegExp(`^${booth_code}$`, 'i') } 
+        });
+        if (!booth) {
+            emitToBoothDisplays(io, booth, 'failed', `Invalid booth code: ${booth_code}`);
+            return res.status(404).json({
+                screen_message_type: 'error',
+                screen_title: 'Invalid Booth',
+                screen_message: 'Invalid booth code provided',
+                barrier_status: 'closed',
+            });
+        }
+
+        // Check if booth is active
+        if (booth.status !== 'active') {
+            emitToBoothDisplays(io, booth, 'failed', `Booth ${booth_code} is inactive`);
+            return res.status(403).json({
+                screen_message_type: 'error',
+                screen_title: 'Inactive Booth',
+                screen_message: 'This booth is currently inactive',
+                barrier_status: 'closed',
+            });
+        }
+
+        // Check if booth is entry type
+        if (booth.booth_type !== 'entry') {
+            emitToBoothDisplays(io, booth, 'failed', `Booth ${booth_code} is not an entry booth`);
+            return res.status(403).json({
+                screen_message_type: 'error',
+                screen_title: 'Invalid Booth Type',
+                screen_message: 'This booth is not configured for entry',
+                barrier_status: 'closed',
+            });
+        }
+
         // Fetch GlobalData from the database
         const globalData = await GlobalModel.findOne();
         if (!globalData) {
-            io.emit('failed', 'Global parking data is not initialized.');
+            emitToBoothDisplays(io, null, 'failed', 'Global parking data is not initialized.');
             return res.status(500).json({
                 screen_message_type: 'error',
                 screen_title: 'Configuration Error',
@@ -295,14 +348,14 @@ const validateVehicleEntry = async (req, res) => {
             });
         }
 
-        io.emit('event', 'Validating Entry');
+        emitToBoothDisplays(io, booth, 'event', 'Validating Entry');
 
         // Fetch vehicle from the database
         let vehicle = await Vehicle.findOne({ vehicle_no });
 
         // Handle Blacklisted Vehicle
         if (vehicle && vehicle.is_blacklisted) {
-            io.emit('failed', `Vehicle ${vehicle_no} is blacklisted and cannot enter.`);
+            emitToBoothDisplays(io, booth, 'failed', `Vehicle ${vehicle_no} is blacklisted and cannot enter.`);
             return res.status(403).json({
                 screen_message_type: 'error',
                 screen_title: 'Access Denied',
@@ -313,7 +366,7 @@ const validateVehicleEntry = async (req, res) => {
 
         // Handle Duplicate Entry
         if (vehicle && vehicle.status === 'parked') {
-            io.emit('failed', `Vehicle ${vehicle_no} is already parked.`);
+            emitToBoothDisplays(io, booth, 'failed', `Vehicle ${vehicle_no} is already parked.`);
             return res.status(400).json({
                 screen_message_type: 'error',
                 screen_title: 'Duplicate Entry',
@@ -326,7 +379,7 @@ const validateVehicleEntry = async (req, res) => {
         if (!vehicle || vehicle.class_code === 'public') {
             // Check availability of public slots
             if (globalData.public_slots.occupied >= globalData.public_slots.total) {
-                io.emit('failed', 'No available public parking slots for vehicles with public class.');
+                emitToBoothDisplays(io, booth, 'failed', 'No available public parking slots for vehicles with public class.');
                 return res.status(400).json({
                     screen_message_type: 'error',
                     screen_title: 'No Public Slots Available',
@@ -366,7 +419,7 @@ const validateVehicleEntry = async (req, res) => {
                 vehicle.starting_date = entry_time || new Date().toISOString();
                 await vehicle.save();
             }
-            io.emit('success', `Vehicle ${vehicle_no} has been validated for entry.`);
+            emitToBoothDisplays(io, booth, 'success', `Vehicle ${vehicle_no} has been validated for entry.`);
             return res.status(200).json({
                 screen_message_type: 'success',
                 screen_title: 'Public Vehicle Entry Validated',
@@ -375,6 +428,7 @@ const validateVehicleEntry = async (req, res) => {
                 max_waiting_duration: 30,
                 entry_time: vehicle.starting_date,
                 class_code: 'public',
+                booth_code: booth.booth_code
             });
         }
 
@@ -383,7 +437,7 @@ const validateVehicleEntry = async (req, res) => {
         const parkingClass = globalData.supported_classes.find(cls => cls.code === class_code);
 
         if (!parkingClass) {
-            io.emit('failed', `Class code ${class_code} is not supported.`);
+            emitToBoothDisplays(io, booth, 'failed', `Class code ${class_code} is not supported.`);
             return res.status(400).json({
                 screen_message_type: 'error',
                 screen_title: 'Invalid Class Code',
@@ -393,7 +447,7 @@ const validateVehicleEntry = async (req, res) => {
         }
 
         if (parkingClass.slots_used >= parkingClass.slots_reserved) {
-            io.emit('failed', `No parking slots available for class ${class_code}.`);
+            emitToBoothDisplays(io, booth, 'failed', `No parking slots available for class ${class_code}.`);
             return res.status(400).json({
                 screen_message_type: 'error',
                 screen_title: 'Class Full',
@@ -413,7 +467,7 @@ const validateVehicleEntry = async (req, res) => {
         vehicle.status = 'parked';
         vehicle.starting_date = entry_time || new Date().toISOString();
         await vehicle.save();
-        io.emit('success', `Vehicle ${vehicle_no} has been validated for entry.`);
+        emitToBoothDisplays(io, booth, 'success', `Vehicle ${vehicle_no} has been validated for entry.`);
         return res.status(200).json({
             screen_message_type: 'success',
             screen_title: 'Vehicle Entry Validated',
@@ -422,16 +476,12 @@ const validateVehicleEntry = async (req, res) => {
             max_waiting_duration: 30,
             entry_time: vehicle.starting_date,
             class_code: vehicle.class_code,
+            booth_code: booth.booth_code
         });
     } catch (error) {
-        io.emit('error', 'There was an issue validating vehicle entry.');
-        console.error("Error during validation:", error);
-        return res.status(500).json({
-            screen_message_type: 'error',
-            screen_title: 'Error',
-            screen_message: 'There was an issue validating vehicle entry.',
-            error: error.message,
-        });
+        emitToBoothDisplays(io, booth, 'error', 'Error validating vehicle entry');
+        console.error(error);
+        return handleError(res, 'Error validating vehicle entry', error, 500);
     }
 };
 
@@ -545,35 +595,75 @@ const getAllRegisteredVehicles = async (req, res) => {
 
 
 // Validate vehicle exit
-// Validate vehicle exit
 const validateVehicleExit = async (req, res) => {
-    const { vehicle_no, is_paid } = req.body;
-    const io = req.app.locals.io;  // Access the io instance
+    const { vehicle_no, is_paid, booth_code } = req.body;
+    const io = req.app.locals.io;
+
+    if (!booth_code) {
+        emitToBoothDisplays(io, null, 'error', 'No booth code provided');
+        return res.status(403).json({ message: "Booth code is required" });
+    }
 
     try {
+        // Validate booth first
+        const booth = await Booth.findOne({ 
+            booth_code: { $regex: new RegExp(`^${booth_code}$`, 'i') } 
+        });
+        if (!booth) {
+            emitToBoothDisplays(io, booth, 'failed', `Invalid booth code: ${booth_code}`);
+            return res.status(404).json({
+                screen_message_type: 'error',
+                screen_title: 'Invalid Booth',
+                screen_message: 'Invalid booth code provided',
+                barrier_status: 'closed',
+            });
+        }
+
+        // Check if booth is active
+        if (booth.status !== 'active') {
+            emitToBoothDisplays(io, booth, 'failed', `Booth ${booth_code} is inactive`);
+            return res.status(403).json({
+                screen_message_type: 'error',
+                screen_title: 'Inactive Booth',
+                screen_message: 'This booth is currently inactive',
+                barrier_status: 'closed',
+            });
+        }
+
+        // Check if booth is exit type
+        if (booth.booth_type !== 'exit') {
+            emitToBoothDisplays(io, booth, 'failed', `Booth ${booth_code} is not an exit booth`);
+            return res.status(403).json({
+                screen_message_type: 'error',
+                screen_title: 'Invalid Booth Type',
+                screen_message: 'This booth is not configured for exit',
+                barrier_status: 'closed',
+            });
+        }
+
         // Find the vehicle by vehicle_no
         const vehicle = await Vehicle.findOne({ vehicle_no });
 
         if (!vehicle) {
-            io.emit('error', 'Vehicle not found');
+            emitToBoothDisplays(io, null, 'error', 'Vehicle not found');
             return handleError(res, 'Vehicle not found', null, 404);
         }
 
         // Check if the vehicle is blacklisted
         if (vehicle.is_blacklisted) {
-            io.emit('failed', 'Vehicle is blacklisted and cannot exit');
+            emitToBoothDisplays(io, booth, 'failed', 'Vehicle is blacklisted and cannot exit');
             return handleError(res, 'Vehicle is blacklisted and cannot exit', null, 403);
         }
 
         // Check if the vehicle is already exited
         if (vehicle.status === 'exited') {
-            io.emit('failed', 'Vehicle has already exited');
+            emitToBoothDisplays(io, booth, 'failed', 'Vehicle has already exited');
             return handleError(res, 'Vehicle has already exited', null, 400);
         }
 
         // Check if the vehicle is parked
         if (vehicle.status !== 'parked') {
-            io.emit('failed', 'Vehicle is not currently parked');
+            emitToBoothDisplays(io, booth, 'failed', 'Vehicle is not currently parked');
             return handleError(res, 'Vehicle is not currently parked', null, 400);
         }
 
@@ -581,13 +671,13 @@ const validateVehicleExit = async (req, res) => {
         const globalData = await GlobalModel.findOne();
 
         if (!globalData) {
-            io.emit('failed', 'Global data not found');
+            emitToBoothDisplays(io, null, 'failed', 'Global data not found');
             return handleError(res, 'Global data not found', null, 500);
         }
 
-        const exit_time = new Date(); // Current exit time
-        const parking_duration = Math.floor((exit_time - vehicle.starting_date) / 1000); // In seconds
-        const parking_duration_in_minutes = Math.ceil(parking_duration / 60); // Convert to minutes (rounded up)
+        const exit_time = new Date();
+        const parking_duration = Math.floor((exit_time - vehicle.starting_date) / 1000);
+        const parking_duration_in_minutes = Math.ceil(parking_duration / 60);
 
         // Initialize pricing details
         const first_one_hour_charges = globalData.first_one_hour_charges;
@@ -599,84 +689,70 @@ const validateVehicleExit = async (req, res) => {
 
         // Determine vehicle type (default to 4-wheeler if unknown)
         const vehicle_type = vehicle.vehicle_type || '4';
-        const charge_info = additional_charges.get(vehicle_type);  // Get charge info from Map
+        const charge_info = additional_charges.get(vehicle_type);
 
         if (!charge_info) {
-            io.emit('error', `No pricing configuration found for vehicle type "${vehicle_type}"`);
-            return handleError(
-                res,
-                `No pricing configuration found for vehicle type "${vehicle_type}"`,
-                null,
-                400
-            );
+            emitToBoothDisplays(io, booth, 'error', `No pricing configuration found for vehicle type "${vehicle_type}"`);
+            return handleError(res, `No pricing configuration found for vehicle type "${vehicle_type}"`, null, 400);
         }
 
         const { interval_minutes, amount_per_interval } = charge_info;
-
-        // Fetch the first hour charges for the given vehicle type
         const first_hour_amount = first_one_hour_charges.get(vehicle_type) || 0;
 
         // Calculate tariff based on parking duration
         if (parking_duration_in_minutes <= 60) {
-            // First hour pricing
             tariff_amount = first_hour_amount;
         } else {
-            // Beyond first hour
             const additional_minutes = parking_duration_in_minutes - 60;
             const additional_intervals = Math.ceil(additional_minutes / interval_minutes);
             tariff_amount = first_hour_amount + additional_intervals * amount_per_interval;
         }
 
+        // Check if vehicle is a registered vehicle (has a non-public class code)
         if (vehicle.class_code && vehicle.class_code !== 'public') {
-            // Handle registered vehicles
+            // This is a registered vehicle - check class validity
             const classInfo = globalData.supported_classes.find(cls => cls.code === vehicle.class_code);
 
             if (!classInfo) {
-                io.emit('failed', `Class code "${vehicle.class_code}" not found`);
-                return handleError(res, `Class code "${vehicle.class_code}" not found`, null, 400);
-            }
-
-            // Check if the class is active
-            is_class_active = classInfo.status === 'active';
-
-            // If the class is active, parking is free
-            if (is_class_active) {
-                amount_due = 0;
-            } else {
-                // For inactive classes, payment is required unless already paid
+                // Class no longer exists in supported classes - treat as unregistered
                 amount_due = is_paid ? 0 : tariff_amount;
-            }
+                emitToBoothDisplays(io, booth, 'warning', `Vehicle ${vehicle_no} has invalid class code. Treating as unregistered vehicle.`);
+            } else {
+                // Check if the class is active
+                is_class_active = classInfo.status === 'active';
 
-            // Decrement class-specific slot usage if applicable
-            if (classInfo.slots_used > 0) {
-                classInfo.slots_used--;
-                await classInfo.save();  // Save updated class info
+                // Amount is 0 only if class is active
+                amount_due = is_class_active ? 0 : (is_paid ? 0 : tariff_amount);
+
+                // Decrement class-specific slot usage
+                if (classInfo.slots_used > 0) {
+                    classInfo.slots_used--;
+                }
             }
         } else {
-            // Handle public parking (unregistered vehicles)
+            // This is an unregistered vehicle - must pay
             amount_due = is_paid ? 0 : tariff_amount;
 
-            if (!is_paid) {
-                // If not paid for public parking, barrier stays closed
-                io.emit('failed', `Payment Required for vehicle ${vehicle_no}.\n Amount payable: ${amount_due}`);
-                return res.status(403).json({
-                    screen_message_type: "error",
-                    screen_title: "Payment Required",
-                    screen_message: "Please pay the parking fee to exit.",
-                    barrier_status: "closed",
-                    tariff: {
-                        total_amount: tariff_amount,
-                        amount_payable: amount_due,
-                    },
-                });
-            }
-
-            // Update the public parking slots if payment is made
+            // Update public slots
             if (globalData.public_slots.occupied > 0) {
                 globalData.public_slots.occupied--;
                 globalData.public_slots.available = globalData.public_slots.total - globalData.public_slots.occupied;
-                await globalData.save();  // Save updated global data
             }
+        }
+
+        // If payment is required but not paid, prevent exit
+        if (amount_due > 0) {
+            emitToBoothDisplays(io, booth, 'failed', `Payment Required for vehicle ${vehicle_no}.\n Amount payable: ${amount_due}`);
+            return res.status(403).json({
+                screen_message_type: "error",
+                screen_title: "Payment Required",
+                screen_message: "Please pay the parking fee to exit.",
+                barrier_status: "closed",
+                tariff: {
+                    total_amount: tariff_amount,
+                    amount_payable: amount_due,
+                },
+            });
         }
 
         // Update global parking data
@@ -713,7 +789,7 @@ const validateVehicleExit = async (req, res) => {
         await vehicle.save();
 
         // Emit success message via socket
-        io.emit('success', `Vehicle ${vehicle_no} has successfully exited`);
+        emitToBoothDisplays(io, booth, 'success', `Vehicle ${vehicle_no} has successfully exited`);
 
         // Return success response
         res.json({
@@ -728,10 +804,11 @@ const validateVehicleExit = async (req, res) => {
                 amount_payable: amount_due,
             },
             class_code: vehicle.class_code || 'public',
+            booth_code: booth.booth_code
         });
 
     } catch (error) {
-        io.emit('error', 'Error validating vehicle exit');
+        emitToBoothDisplays(io, booth, 'error', 'Error validating vehicle exit');
         console.error(error);
         return handleError(res, 'Error validating vehicle exit', error, 500);
     }

@@ -2,33 +2,49 @@ const Booth = require('../models/boothModel');  // Booth schema
 
 // Controller to create a new booth
 const createBooth = async (req, res) => {
-    const { booth_code, location, description, booth_type } = req.body; // Added booth_type
+    const { booth_code, location, description, booth_type, devices } = req.body;
 
     // Validation for required fields
     if (!booth_code || !location || !description || !booth_type) {
         return res.status(400).json({ message: 'All fields (booth_code, location, description, booth_type) are required' });
     }
 
-    // Booth type validation: should be 'entry' or 'exit'
+    // Booth type validation
     if (!['entry', 'exit'].includes(booth_type)) {
         return res.status(400).json({ message: 'Booth type must be either "entry" or "exit"' });
     }
 
+    // Validate devices if provided
+    if (devices) {
+        if (!Array.isArray(devices)) {
+            return res.status(400).json({ message: 'Devices must be an array' });
+        }
+
+        for (const device of devices) {
+            if (!device.device_id || !device.device_type) {
+                return res.status(400).json({ message: 'Each device must have device_id and device_type' });
+            }
+            if (!['display', 'barrier'].includes(device.device_type)) {
+                return res.status(400).json({ message: 'Device type must be either "display" or "barrier"' });
+            }
+        }
+    }
+
     try {
-        // Check if booth already exists
-        const existingBooth = await Booth.findOne({ booth_code });
+        const existingBooth = await Booth.findOne({ 
+            booth_code: { $regex: new RegExp(`^${booth_code}$`, 'i') } 
+        });
         if (existingBooth) {
             return res.status(400).json({ message: 'Booth code already exists' });
         }
 
-        // Create new booth with booth_type and default active status
         const newBooth = new Booth({
             booth_code,
             location,
             description,
             booth_type,
-            status: 'active', // Add default status
-            devices: []  // Initialize with no devices
+            status: 'active',
+            devices: devices || []
         });
 
         await newBooth.save();
@@ -69,7 +85,9 @@ const addDeviceToBooth = async (req, res) => {
 
     try {
         // Find booth by booth_code
-        const booth = await Booth.findOne({ booth_code });
+        const booth = await Booth.findOne({ 
+            booth_code: { $regex: new RegExp(`^${booth_code}$`, 'i') } 
+        });
         if (!booth) {
             return res.status(404).json({ message: `Booth with code ${booth_code} not found` });
         }
@@ -112,7 +130,9 @@ const updateDeviceInBooth = async (req, res) => {
 
     try {
         // Find the booth by booth_code
-        const booth = await Booth.findOne({ booth_code });
+        const booth = await Booth.findOne({ 
+            booth_code: { $regex: new RegExp(`^${booth_code}$`, 'i') } 
+        });
         if (!booth) {
             return res.status(404).json({ message: `Booth with code ${booth_code} not found` });
         }
@@ -143,30 +163,27 @@ const updateDeviceInBooth = async (req, res) => {
 const updateDeviceSocketId = async (req, res) => {
     const { booth_code, device_id, socket_id } = req.body;
 
-    // Validation for required fields
     if (!booth_code || !device_id || !socket_id) {
         return res.status(400).json({ message: 'Booth code, device ID, and socket ID are required' });
     }
 
     try {
-        // Find the booth by booth_code
-        const booth = await Booth.findOne({ booth_code });
+        const booth = await Booth.findOne({ 
+            booth_code: { $regex: new RegExp(`^${booth_code}$`, 'i') } 
+        });
         if (!booth) {
             return res.status(404).json({ message: `Booth with code ${booth_code} not found` });
         }
 
-        // Check if booth is inactive
         if (booth.status === 'inactive') {
             return res.status(400).json({ message: 'Cannot update socket ID for inactive booth' });
         }
 
-        // Find the device in the booth's devices array
         const device = booth.devices.find(dev => dev.device_id === device_id);
         if (!device) {
             return res.status(404).json({ message: `Device with ID ${device_id} not found in this booth` });
         }
 
-        // Update the socket_id
         device.socket_id = socket_id;
         await booth.save();
 
@@ -187,7 +204,9 @@ const sendMessageToDevice = async (req, res) => {
     }
 
     try {
-        const booth = await Booth.findOne({ booth_code });
+        const booth = await Booth.findOne({ 
+            booth_code: { $regex: new RegExp(`^${booth_code}$`, 'i') } 
+        });
         if (!booth) {
             return res.status(404).json({ message: `Booth with code ${booth_code} not found` });
         }
@@ -215,13 +234,15 @@ const sendMessageToDevice = async (req, res) => {
     }
 };
 
-// Add new controller to update booth
+// Controller to update booth
 const updateBooth = async (req, res) => {
     const { booth_code } = req.params;
-    const { location, description, booth_type, status } = req.body;
+    const { location, description, booth_type, status, devices } = req.body;  // Add back booth_type
 
     try {
-        const booth = await Booth.findOne({ booth_code });
+        const booth = await Booth.findOne({ 
+            booth_code: { $regex: new RegExp(`^${booth_code}$`, 'i') } 
+        });
         if (!booth) {
             return res.status(404).json({ message: `Booth with code ${booth_code} not found` });
         }
@@ -236,11 +257,28 @@ const updateBooth = async (req, res) => {
             return res.status(400).json({ message: 'Status must be either "active" or "inactive"' });
         }
 
+        // Validate devices if provided
+        if (devices) {
+            if (!Array.isArray(devices)) {
+                return res.status(400).json({ message: 'Devices must be an array' });
+            }
+
+            for (const device of devices) {
+                if (!device.device_id || !device.device_type) {
+                    return res.status(400).json({ message: 'Each device must have device_id and device_type' });
+                }
+                if (!['display', 'barrier'].includes(device.device_type)) {
+                    return res.status(400).json({ message: 'Device type must be either "display" or "barrier"' });
+                }
+            }
+        }
+
         // Update only provided fields
         if (location) booth.location = location;
         if (description) booth.description = description;
-        if (booth_type) booth.booth_type = booth_type;
+        if (booth_type) booth.booth_type = booth_type;  // Add back booth_type update
         if (status) booth.status = status;
+        if (devices) booth.devices = devices;
 
         await booth.save();
         res.status(200).json({ message: 'Booth updated successfully', booth });
