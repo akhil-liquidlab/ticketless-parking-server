@@ -1,10 +1,25 @@
 const mongoose = require('mongoose');
 
 const deviceSchema = new mongoose.Schema({
-    device_id: { type: String, required: true },
-    device_type: { type: String, required: true, enum: ['display', 'barrier'] },
-    socket_id: { type: String, required: false }, // Optional, will be set when the device connects
-}, { timestamps: true });
+    _id: {
+        type: mongoose.Schema.Types.ObjectId,
+        default: () => new mongoose.Types.ObjectId(),
+        auto: true
+    },
+    device_id: {
+        type: String,
+        required: true
+    },
+    device_type: {
+        type: String,
+        required: true,
+        enum: ['display', 'camera', 'barrier']
+    },
+    socket_id: {
+        type: String,
+        default: null
+    }
+}, { _id: false });
 
 const boothSchema = new mongoose.Schema({
     booth_code: { type: String, required: true, unique: true },
@@ -14,7 +29,6 @@ const boothSchema = new mongoose.Schema({
     status: { type: String, required: true, enum: ['active', 'inactive'], default: 'active' },  // Add status field
     devices: [deviceSchema]  // Devices as subdocuments
 }, { timestamps: true });
-
 
 const Booth = mongoose.model('Booth', boothSchema);
 
