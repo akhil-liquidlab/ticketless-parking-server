@@ -39,17 +39,17 @@ router.post('/KeepAlive', (req, res) => {
     console.log("KeepAlive");
     console.log(req.body);
 
-    // dummy data
-    const vehicleData = {
-        vehicle_no: "KL01AB1234",
-        vehicle_type: "4",
-        device_id: "D001",
-        booth_code: "B001"
-    };
+    // // dummy data
+    // const vehicleData = {
+    //     vehicle_no: "KL01AB1234",
+    //     vehicle_type: "4",
+    //     device_id: "D001",
+    //     booth_code: "B001"
+    // };
 
-    // Simply modify the body of the request
-    req.body = vehicleData;
-    vehicleValidation.validateVehicleExit(req, res);
+    // // Simply modify the body of the request
+    // req.body = vehicleData;
+    // vehicleValidation.validateVehicleExit(req, res);
 });
 
 module.exports = router;
