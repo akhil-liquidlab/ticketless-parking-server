@@ -36,8 +36,8 @@ router.post('/DeviceInfo', (req, res) => {
 
 // /NotificationInfo/KeepAlive
 router.post('/KeepAlive', (req, res) => {
-    // console.log("KeepAlive");
-    // console.log(req.body);
+    console.log("KeepAlive");
+    console.log(req.body);
 
     // dummy data
     const vehicleData = {
