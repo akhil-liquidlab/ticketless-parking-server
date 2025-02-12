@@ -10,14 +10,14 @@ router.post('/TollgateInfo', (req, res) => {
     const vehicleData = {
         vehicle_no: req.body.Picture.Plate.PlateNumber,
         vehicle_type: req.body.Picture.Vehicle.VehicleType === 'Motorcycle' ? '2' :
-                     req.body.Picture.Vehicle.VehicleType === 'SUV' || 
-                     req.body.Picture.Vehicle.VehicleType === 'PassengerCar' || 
-                     req.body.Picture.Vehicle.VehicleType === 'Car' || 
-                     req.body.Picture.Vehicle.VehicleType === 'Sedan' ? '4' :
-                     req.body.Picture.Vehicle.VehicleType === 'Truck' ||
-                     req.body.Picture.Vehicle.VehicleType === 'Bus' ||
-                     req.body.Picture.Vehicle.VehicleType === 'Van' ||
-                     req.body.Picture.Vehicle.VehicleType === 'Lorry' ? '6' : '3',
+            req.body.Picture.Vehicle.VehicleType === 'SUV' ||
+                req.body.Picture.Vehicle.VehicleType === 'PassengerCar' ||
+                req.body.Picture.Vehicle.VehicleType === 'Car' ||
+                req.body.Picture.Vehicle.VehicleType === 'Sedan' ? '4' :
+                req.body.Picture.Vehicle.VehicleType === 'Truck' ||
+                    req.body.Picture.Vehicle.VehicleType === 'Bus' ||
+                    req.body.Picture.Vehicle.VehicleType === 'Van' ||
+                    req.body.Picture.Vehicle.VehicleType === 'Lorry' ? '6' : '3',
         device_id: "D001",
         booth_code: "B001"
     };
@@ -40,16 +40,16 @@ router.post('/KeepAlive', (req, res) => {
     // console.log(req.body);
 
     // dummy data
-    // const vehicleData = {
-    //     vehicle_no: "KL01AB1234",
-    //     vehicle_type: "4",
-    //     device_id: "D002",
-    //     booth_code: "B001"
-    // };
+    const vehicleData = {
+        vehicle_no: "KL01AB1234",
+        vehicle_type: "4",
+        device_id: "D001",
+        booth_code: "B001"
+    };
 
-    // // Simply modify the body of the request
-    // req.body = vehicleData;
-    // vehicleValidation.validateVehicleExit(req, res);
+    // Simply modify the body of the request
+    req.body = vehicleData;
+    vehicleValidation.validateVehicleExit(req, res);
 });
 
 module.exports = router;
