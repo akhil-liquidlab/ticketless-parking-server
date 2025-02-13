@@ -1,7 +1,6 @@
 // barrier manager which sends commands to the barrier to open and close the barrier
 
-const { initialize } = require("./socketManager");
-const AxiosDigestAuth = require('axios-digest-auth');
+const AxiosDigestAuth = require('@mhoc/axios-digest-auth').default;
 
 let digestAuth = new AxiosDigestAuth({
     username: "admin",
