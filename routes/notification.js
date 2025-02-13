@@ -39,6 +39,8 @@ router.post('/KeepAlive', (req, res) => {
     console.log("KeepAlive");
     console.log(req.body);
 
+    // return {};
+
     // // dummy data
     // const vehicleData = {
     //     vehicle_no: "KL01AB1234",
