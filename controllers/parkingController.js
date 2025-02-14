@@ -5,8 +5,7 @@ const { handleSuccess, handleError } = require('../utils/responseUtils.js');
 const moment = require('moment');
 const Booth = require('../models/boothModel');
 const socketManager = require('../utils/socketManager');
-const barrierManager = require('../utils/barrierManager');
-
+const BarrierManager = require('../utils/barrierManager');
 
 
 // Register a new vehicle
@@ -288,6 +287,7 @@ const emitToBoothDisplays = (io, booth, eventName, message) => {
 };
 
 const validateVehicleEntry = async (req, res) => {
+    console.log('Request body:', req.body);
     const { vehicle_no, entry_time, vehicle_type, booth_code, device_id } = req.body || {};
     
     try {
@@ -366,6 +366,8 @@ const validateVehicleEntry = async (req, res) => {
                 });
             }
 
+            // await socketManager.emitToDevice(identifier, 'event', 'Validating Entry');
+
             // Fetch vehicle from the database
             let vehicle = await Vehicle.findOne({ vehicle_no });
 
@@ -437,8 +439,8 @@ const validateVehicleEntry = async (req, res) => {
                 }
 
                 // Open the barrier for entry
-                await barrierManager.openBarrier();
-
+                await BarrierManager.openBarrier();
+                
                 await socketManager.emitToDevice(identifier, 'success', `Vehicle ${vehicle_no} has been validated for entry.`);
                 return res.status(200).json({
                     screen_message_type: 'success',
@@ -487,10 +489,6 @@ const validateVehicleEntry = async (req, res) => {
             vehicle.status = 'parked';
             vehicle.starting_date = entry_time || new Date().toISOString();
             await vehicle.save();
-
-            // Open the barrier for entry
-            await barrierManager.openBarrier();
-
             await socketManager.emitToDevice(identifier, 'success', `Vehicle ${vehicle_no} has been validated for entry.`);
             return res.status(200).json({
                 screen_message_type: 'success',
@@ -648,7 +646,7 @@ const validateVehicleExit = async (req, res) => {
 
         const identifier = device_id || booth_code;
         if (!identifier) {
-            await socketManager.emitToDevice(identifier, 'error', 'No booth identifier provided');
+            await socketManager.emitToDevice(null, 'error', 'No booth identifier provided');
             return res.status(403).json({ message: "Booth identifier is required" });
         }
 
@@ -834,7 +832,7 @@ const validateVehicleExit = async (req, res) => {
         await vehicle.save();
 
         // Open the barrier for exit
-        await barrierManager.openBarrier();
+        await BarrierManager.openBarrier();
 
         // Final success emission
         await socketManager.emitToDevice(identifier, 'success', `Vehicle ${vehicle_no} has successfully exited`);

@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const vehicleValidation = require('../controllers/parkingController');
+const BarrierManager = require('../utils/barrierManager');
 
 router.post('/TollgateInfo', (req, res) => {
     console.log("TollgateInfo");
@@ -35,9 +36,12 @@ router.post('/DeviceInfo', (req, res) => {
 });
 
 // /NotificationInfo/KeepAlive
-router.post('/KeepAlive', (req, res) => {
+router.post('/KeepAlive', async (req, res) => {
     console.log("KeepAlive");
     console.log(req.body);
+
+    // open the barrier
+    // await BarrierManager.openBarrier();
 
     // return {};
 

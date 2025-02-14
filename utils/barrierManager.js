@@ -31,6 +31,7 @@ const BarrierManager = {
     }
 }
 
+module.exports = BarrierManager;
 
 // const testBarrierOpen = async () => {
 //     const response = await digestAuth.request({
