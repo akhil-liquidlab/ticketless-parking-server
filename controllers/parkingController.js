@@ -485,6 +485,9 @@ const validateVehicleEntry = async (req, res) => {
 
             await globalData.save();
 
+            // Open the barrier for entry
+            await BarrierManager.openBarrier();
+            
             // Update vehicle status for registered vehicle
             vehicle.status = 'parked';
             vehicle.starting_date = entry_time || new Date().toISOString();
