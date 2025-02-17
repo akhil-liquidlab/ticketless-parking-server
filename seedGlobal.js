@@ -1,6 +1,10 @@
 require('dotenv').config(); // Load environment variables
 const mongoose = require('mongoose');
 const Global = require('./models/globalModel'); // Adjust the path according to your project structure
+const Booth = require('./models/boothModel'); // Import the Booth model
+const DisplayDevice = require('./models/displayDeviceModel'); // Import the DisplayDevice model
+const ANPRCamera = require('./models/anprCameraModel'); // Import the ANPRCamera model
+const AndroidDevice = require('./models/androidDeviceModel'); // Import the AndroidDevice model
 
 // Connect to MongoDB
 const connectDB = async () => {
@@ -67,6 +71,49 @@ const seedGlobal = async () => {
         // Save to the database
         await newGlobalData.save();
         console.log('Global data created successfully.');
+
+        // Seed initial booths
+        const booth1 = new Booth({
+            booth_code: 'B001',
+            location: 'Main Entrance',
+            description: 'Entry booth for the main parking area.',
+            booth_type: 'entry',
+            status: 'active',
+            displayDevices: [], // Add display device IDs here if needed
+            cameraDevices: [],   // Add ANPR camera IDs here if needed
+            androidDevices: []   // Add Android device IDs here if needed
+        });
+
+        const booth2 = new Booth({
+            booth_code: 'B002',
+            location: 'Exit Gate',
+            description: 'Exit booth for the main parking area.',
+            booth_type: 'exit',
+            status: 'active',
+            displayDevices: [],
+            cameraDevices: [],
+            androidDevices: []
+        });
+
+        await booth1.save();
+        await booth2.save();
+        console.log('Booths created successfully.');
+
+        // Seed Android devices
+        const androidDevice1 = new AndroidDevice({
+            device_id: 'android1',
+            socket_id: null
+        });
+
+        const androidDevice2 = new AndroidDevice({
+            device_id: 'android2',
+            socket_id: null
+        });
+
+        await androidDevice1.save();
+        await androidDevice2.save();
+        console.log('Android devices created successfully.');
+
     } catch (error) {
         console.error('Error while seeding global data:', error.message);
     }

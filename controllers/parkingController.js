@@ -287,9 +287,8 @@ const emitToBoothDisplays = (io, booth, eventName, message) => {
 };
 
 const validateVehicleEntry = async (req, res) => {
-    console.log('Request body:', req.body);
-    const { vehicle_no, entry_time, vehicle_type, booth_code, device_id } = req.body || {};
-    
+    const { vehicle_no, entry_time, vehicle_type, booth_code } = req.body;
+
     try {
         const io = socketManager.getIO();
         if (!io) {
@@ -302,13 +301,12 @@ const validateVehicleEntry = async (req, res) => {
             });
         }
 
-        const identifier = device_id || booth_code;
         if (!vehicle_no) {
-            await socketManager.emitToDevice(identifier, 'error', 'No vehicle number found');
+            await socketManager.emitToDevice(booth_code, 'display', 'error', 'No vehicle number found');
             return res.status(403).json({ message: "No vehicle number found" });
         }
 
-        if (!identifier) {
+        if (!booth_code) {
             return res.status(403).json({ 
                 screen_message_type: 'error',
                 screen_title: 'Missing Information',
@@ -320,10 +318,10 @@ const validateVehicleEntry = async (req, res) => {
         // Modified booth validation logic
         let booth;
         try {
-            booth = await socketManager.findBoothByIdentifier(identifier);
+            booth = await socketManager.findBoothByIdentifier(booth_code);
             
             if (!booth) {
-                await socketManager.emitToDevice(identifier, 'failed', `No booth found for identifier: ${identifier}`);
+                await socketManager.emitToDevice(booth_code, "display", 'failed', `No booth found for identifier: ${booth_code}`);
                 return res.status(404).json({
                     screen_message_type: 'error',
                     screen_title: 'Invalid Booth',
@@ -334,7 +332,7 @@ const validateVehicleEntry = async (req, res) => {
 
             // Check if booth is active
             if (booth.status !== 'active') {
-                await socketManager.emitToDevice(identifier, 'failed', `Booth ${booth.booth_code} is inactive`);
+                await socketManager.emitToDevice(booth_code, "display", 'failed', `Booth ${booth.booth_code} is inactive`);
                 return res.status(403).json({
                     screen_message_type: 'error',
                     screen_title: 'Inactive Booth',
@@ -345,7 +343,7 @@ const validateVehicleEntry = async (req, res) => {
 
             // Check if booth is entry type
             if (booth.booth_type !== 'entry') {
-                await socketManager.emitToDevice(identifier, 'failed', `Booth ${booth.booth_code} is not an entry booth`);
+                await socketManager.emitToDevice(booth_code, "display", 'failed', `Booth ${booth.booth_code} is not an entry booth`);
                 return res.status(403).json({
                     screen_message_type: 'error',
                     screen_title: 'Invalid Booth Type',
@@ -357,7 +355,7 @@ const validateVehicleEntry = async (req, res) => {
             // Fetch GlobalData from the database
             const globalData = await GlobalModel.findOne();
             if (!globalData) {
-                await socketManager.emitToDevice(identifier, 'failed', 'Global parking data is not initialized.');
+                await socketManager.emitToDevice(booth_code, "display", 'failed', 'Global parking data is not initialized.');
                 return res.status(500).json({
                     screen_message_type: 'error',
                     screen_title: 'Configuration Error',
@@ -366,14 +364,12 @@ const validateVehicleEntry = async (req, res) => {
                 });
             }
 
-            // await socketManager.emitToDevice(identifier, 'event', 'Validating Entry');
-
             // Fetch vehicle from the database
             let vehicle = await Vehicle.findOne({ vehicle_no });
 
             // Handle Blacklisted Vehicle
             if (vehicle && vehicle.is_blacklisted) {
-                await socketManager.emitToDevice(identifier, 'failed', `Vehicle ${vehicle_no} is blacklisted and cannot enter.`);
+                await socketManager.emitToDevice(booth_code, "display", 'failed', `Vehicle ${vehicle_no} is blacklisted and cannot enter.`);
                 return res.status(403).json({
                     screen_message_type: 'error',
                     screen_title: 'Access Denied',
@@ -384,7 +380,7 @@ const validateVehicleEntry = async (req, res) => {
 
             // Handle Duplicate Entry
             if (vehicle && vehicle.status === 'parked') {
-                await socketManager.emitToDevice(identifier, 'failed', `Vehicle ${vehicle_no} is already parked.`);
+                await socketManager.emitToDevice(booth_code, "display", 'failed', `Vehicle ${vehicle_no} is already parked.`);
                 return res.status(400).json({
                     screen_message_type: 'error',
                     screen_title: 'Duplicate Entry',
@@ -397,7 +393,7 @@ const validateVehicleEntry = async (req, res) => {
             if (!vehicle || vehicle.class_code === 'public') {
                 // Check availability of public slots
                 if (globalData.public_slots.occupied >= globalData.public_slots.total) {
-                    await socketManager.emitToDevice(identifier, 'failed', 'No available public parking slots for vehicles with public class.');
+                    await socketManager.emitToDevice(booth_code, "display", 'failed', 'No available public parking slots for vehicles with public class.');
                     return res.status(400).json({
                         screen_message_type: 'error',
                         screen_title: 'No Public Slots Available',
@@ -438,10 +434,10 @@ const validateVehicleEntry = async (req, res) => {
                     await vehicle.save();
                 }
 
-                // Open the barrier for entry
-                await BarrierManager.openBarrier();
+                // Open the barrier for entry by passing the booth code
+                await BarrierManager.openBarrier(booth_code);
                 
-                await socketManager.emitToDevice(identifier, 'success', `Vehicle ${vehicle_no} has been validated for entry.`);
+                await socketManager.emitToDevice(booth_code, "display", 'success', `Vehicle ${vehicle_no} has been validated for entry.`);
                 return res.status(200).json({
                     screen_message_type: 'success',
                     screen_title: 'Public Vehicle Entry Validated',
@@ -459,7 +455,7 @@ const validateVehicleEntry = async (req, res) => {
             const parkingClass = globalData.supported_classes.find(cls => cls.code === class_code);
 
             if (!parkingClass) {
-                await socketManager.emitToDevice(identifier, 'failed', `Class code ${class_code} is not supported.`);
+                await socketManager.emitToDevice(booth_code, "display", 'failed', `Class code ${class_code} is not supported.`);
                 return res.status(400).json({
                     screen_message_type: 'error',
                     screen_title: 'Invalid Class Code',
@@ -469,7 +465,7 @@ const validateVehicleEntry = async (req, res) => {
             }
 
             if (parkingClass.slots_used >= parkingClass.slots_reserved) {
-                await socketManager.emitToDevice(identifier, 'failed', `No parking slots available for class ${class_code}.`);
+                await socketManager.emitToDevice(booth_code, "display", 'failed', `No parking slots available for class ${class_code}.`);
                 return res.status(400).json({
                     screen_message_type: 'error',
                     screen_title: 'Class Full',
@@ -486,13 +482,13 @@ const validateVehicleEntry = async (req, res) => {
             await globalData.save();
 
             // Open the barrier for entry
-            await BarrierManager.openBarrier();
+            await BarrierManager.openBarrier(booth_code);
             
             // Update vehicle status for registered vehicle
             vehicle.status = 'parked';
             vehicle.starting_date = entry_time || new Date().toISOString();
             await vehicle.save();
-            await socketManager.emitToDevice(identifier, 'success', `Vehicle ${vehicle_no} has been validated for entry.`);
+            await socketManager.emitToDevice(booth_code, "display", 'success', `Vehicle ${vehicle_no} has been validated for entry.`);
             return res.status(200).json({
                 screen_message_type: 'success',
                 screen_title: 'Vehicle Entry Validated',
@@ -507,7 +503,7 @@ const validateVehicleEntry = async (req, res) => {
             console.error('validateVehicleEntry error:', error);
             
             try {
-                await socketManager.emitToDevice(identifier, 'error', {
+                await socketManager.emitToDevice(booth_code, "display", 'error', {
                     message: 'Error validating vehicle entry',
                     error: error.message
                 });
@@ -634,7 +630,7 @@ const getAllRegisteredVehicles = async (req, res) => {
 
 // Validate vehicle exit
 const validateVehicleExit = async (req, res) => {
-    const { vehicle_no, is_paid, booth_code, device_id } = req.body;
+    const { vehicle_no, is_paid, booth_code } = req.body;
     
     try {
         const io = socketManager.getIO();
@@ -647,16 +643,15 @@ const validateVehicleExit = async (req, res) => {
             });
         }
 
-        const identifier = device_id || booth_code;
-        if (!identifier) {
-            await socketManager.emitToDevice(null, 'error', 'No booth identifier provided');
+        if (!booth_code) {
+            await socketManager.emitToDevice(booth_code, "display", 'error', 'No booth identifier provided');
             return res.status(403).json({ message: "Booth identifier is required" });
         }
 
         // Validate booth first
-        const booth = await socketManager.findBoothByIdentifier(identifier);
+        const booth = await socketManager.findBoothByIdentifier(booth_code);
         if (!booth) {
-            await socketManager.emitToDevice(identifier, 'failed', `Invalid booth identifier: ${identifier}`);
+            await socketManager.emitToDevice(booth_code, "display", 'failed', `Invalid booth identifier: ${booth_code}`);
             return res.status(404).json({
                 screen_message_type: 'error',
                 screen_title: 'Invalid Booth',
@@ -667,7 +662,7 @@ const validateVehicleExit = async (req, res) => {
 
         // Check if booth is active
         if (booth.status !== 'active') {
-            await socketManager.emitToDevice(identifier, 'failed', `Booth ${booth.booth_code} is inactive`);
+            await socketManager.emitToDevice(booth_code, "display", 'failed', `Booth ${booth.booth_code} is inactive`);
             return res.status(403).json({
                 screen_message_type: 'error',
                 screen_title: 'Inactive Booth',
@@ -678,7 +673,7 @@ const validateVehicleExit = async (req, res) => {
 
         // Check if booth is exit type
         if (booth.booth_type !== 'exit') {
-            await socketManager.emitToDevice(identifier, 'failed', `Booth ${booth.booth_code} is not an exit booth`);
+            await socketManager.emitToDevice(booth_code, "display", 'failed', `Booth ${booth.booth_code} is not an exit booth`);
             return res.status(403).json({
                 screen_message_type: 'error',
                 screen_title: 'Invalid Booth Type',
@@ -691,25 +686,25 @@ const validateVehicleExit = async (req, res) => {
         const vehicle = await Vehicle.findOne({ vehicle_no });
 
         if (!vehicle) {
-            await socketManager.emitToDevice(identifier, 'error', 'Vehicle not found');
+            await socketManager.emitToDevice(booth_code, "display", 'error', 'Vehicle not found');
             return handleError(res, 'Vehicle not found', null, 404);
         }
 
         // Check if the vehicle is blacklisted
         if (vehicle.is_blacklisted) {
-            await socketManager.emitToDevice(identifier, 'failed', 'Vehicle is blacklisted and cannot exit');
+            await socketManager.emitToDevice(booth_code, "display", 'failed', 'Vehicle is blacklisted and cannot exit');
             return handleError(res, 'Vehicle is blacklisted and cannot exit', null, 403);
         }
 
         // Check if the vehicle is already exited
         if (vehicle.status === 'exited') {
-            await socketManager.emitToDevice(identifier, 'failed', 'Vehicle has already exited');
+            await socketManager.emitToDevice(booth_code, "display", 'failed', 'Vehicle has already exited');
             return handleError(res, 'Vehicle has already exited', null, 400);
         }
 
         // Check if the vehicle is parked
         if (vehicle.status !== 'parked') {
-            await socketManager.emitToDevice(identifier, 'failed', 'Vehicle is not currently parked');
+            await socketManager.emitToDevice(booth_code, "display", 'failed', 'Vehicle is not currently parked');
             return handleError(res, 'Vehicle is not currently parked', null, 400);
         }
 
@@ -717,7 +712,7 @@ const validateVehicleExit = async (req, res) => {
         const globalData = await GlobalModel.findOne();
 
         if (!globalData) {
-            await socketManager.emitToDevice(identifier, 'failed', 'Global data not found');
+            await socketManager.emitToDevice(booth_code, "display", 'failed', 'Global data not found');
             return handleError(res, 'Global data not found', null, 500);
         }
 
@@ -738,7 +733,7 @@ const validateVehicleExit = async (req, res) => {
         const charge_info = additional_charges.get(vehicle_type);
 
         if (!charge_info) {
-            await socketManager.emitToDevice(identifier, 'error', `No pricing configuration found for vehicle type "${vehicle_type}"`);
+            await socketManager.emitToDevice(booth_code, "display", 'error', `No pricing configuration found for vehicle type "${vehicle_type}"`);
             return handleError(res, `No pricing configuration found for vehicle type "${vehicle_type}"`, null, 400);
         }
 
@@ -762,7 +757,7 @@ const validateVehicleExit = async (req, res) => {
             if (!classInfo) {
                 // Class no longer exists in supported classes - treat as unregistered
                 amount_due = is_paid ? 0 : tariff_amount;
-                await socketManager.emitToDevice(identifier, 'warning', `Vehicle ${vehicle_no} has invalid class code. Treating as unregistered vehicle.`);
+                await socketManager.emitToDevice(booth_code, "display", 'warning', `Vehicle ${vehicle_no} has invalid class code. Treating as unregistered vehicle.`);
             } else {
                 // Check if the class is active
                 is_class_active = classInfo.status === 'active';
@@ -788,7 +783,7 @@ const validateVehicleExit = async (req, res) => {
 
         // If payment is required but not paid, prevent exit
         if (amount_due > 0) {
-            await socketManager.emitToDevice(identifier, 'failed', `Payment Required for vehicle ${vehicle_no}.\n Amount payable: ${amount_due}`);
+            await socketManager.emitToDevice(booth_code, "display", 'failed', `Payment Required for vehicle ${vehicle_no}.\n Amount payable: ${amount_due}`);
             return res.status(403).json({
                 screen_message_type: "error",
                 screen_title: "Payment Required",
@@ -834,11 +829,11 @@ const validateVehicleExit = async (req, res) => {
         // Save the updated vehicle information
         await vehicle.save();
 
-        // Open the barrier for exit
-        await BarrierManager.openBarrier();
+        // Open the barrier for exit by passing the booth code
+        await BarrierManager.openBarrier(booth_code);
 
         // Final success emission
-        await socketManager.emitToDevice(identifier, 'success', `Vehicle ${vehicle_no} has successfully exited`);
+        await socketManager.emitToDevice(booth_code, "display", 'success', `Vehicle ${vehicle_no} has successfully exited`);
 
         // Return the same success response
         return res.json({
@@ -859,7 +854,7 @@ const validateVehicleExit = async (req, res) => {
     } catch (error) {
         console.error('validateVehicleExit error:', error);
         try {
-            await socketManager.emitToDevice(identifier, 'error', {
+            await socketManager.emitToDevice(booth_code, "display", 'error', {
                 message: 'Error validating vehicle exit',
                 error: error.message
             });

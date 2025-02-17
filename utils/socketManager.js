@@ -1,5 +1,8 @@
 const socketIo = require("socket.io");
 const Booth = require('../models/boothModel');
+const DisplayDevice = require('../models/displayDeviceModel');
+const ANPRCamera = require('../models/anprCameraModel');
+const AndroidDevice = require('../models/androidDeviceModel');
 const messageQueue = require('./messageQueue');
 
 const socketManager = {
@@ -23,7 +26,6 @@ const socketManager = {
                 maxHttpBufferSize: 1e8, // Increase buffer size
                 allowEIO3: true,        // Allow Engine.IO 3 compatibility
                 upgradeTimeout: 30000,  // 30 second upgrade timeout
-                // keepaliveTimeout: 5000, // 10 seconds
                 requestTimeout: 60000
             });
 
@@ -42,24 +44,29 @@ const socketManager = {
                 }
             }, 25000);
 
-            socket.on("register_device", async (device_id) => {
+            socket.on("register_device", async (device_id, device_type) => {
                 try {
-                    const booth = await Booth.findOne({ "devices.device_id": device_id });
-                    if (!booth) return;
+                    let device;
+                    if (device_type === 'display') {
+                        device = await DisplayDevice.findOne({ device_id });
+                    } else if (device_type === 'anpr') {
+                        device = await ANPRCamera.findOne({ camera_id: device_id });
+                    } else if (device_type === 'android') {
+                        device = await AndroidDevice.findOne({ device_id });
+                    }
 
-                    const device = booth.devices.find(d => d.device_id === device_id);
                     if (!device) return;
 
-                    device.socket_id = socket.id;
-                    await booth.save();
+                    device.socket_id = socket.id; // Update the socket_id
+                    await device.save();
                     
                     socket.emit('registration_success', {
-                        message: "Device connected successfully",
-                        booth_code: booth.booth_code,
+                        message: `${device_type.charAt(0).toUpperCase() + device_type.slice(1)} connected successfully`,
+                        device_id: device.device_id,
                         socket_id: socket.id
                     });
 
-                    console.log(`Device ${device_id} registered with socket ${socket.id}`);
+                    console.log(`${device_type.charAt(0).toUpperCase() + device_type.slice(1)} ${device_id} registered with socket ${socket.id}`);
                 } catch (error) {
                     console.error('Error registering device:', error);
                 }
@@ -102,51 +109,31 @@ const socketManager = {
             });
 
             socket.on("disconnect", async (reason) => {
-                console.log(`Socket ${socket.id} disconnected temporarily. Reason: ${reason}`);
-                console.log('Full disconnect details:', {
-                    reason,
-                    connected: socket.connected,
-                    disconnected: socket.disconnected,
-                    timestamp: new Date().toISOString()
-                });
-                clearInterval(keepAliveInterval);
-
-                // List of temporary disconnect reasons that should not clear socket_id
-                const temporaryDisconnects = [
-                    'transport error',
-                    'ping timeout',
-                    'transport close',
-                    'client namespace disconnect'
-                ];
-
-                if (temporaryDisconnects.includes(reason)) {
-                    console.log(`Temporary disconnect, keeping socket_id for ${socket.id}`);
-                    return;
-                }
-
-                // List of permanent disconnect reasons
-                const permanentDisconnects = [
-                    'client disconnect',
-                    'server disconnect',
-                    'forced close'
-                ];
-
-                if (permanentDisconnects.includes(reason) && socket.disconnected) {
-                    try {
-                        const booth = await Booth.findOne({ "devices.socket_id": socket.id });
-                        if (booth) {
-                            const device = booth.devices.find(d => d.socket_id === socket.id);
-                            if (device) {
-                                device.socket_id = null;
-                                await booth.save();
-                                console.log(`Cleared socket_id for device ${device.device_id} - permanent disconnect`);
-                            }
-                        }
-                    } catch (error) {
-                        console.error('Error clearing socket_id on disconnect:', error);
+                console.log(`Socket disconnected: ${socket.id}, reason: ${reason}`);
+                // Clear socket_id for devices on disconnect
+                try {
+                    const displayDevice = await DisplayDevice.findOne({ socket_id: socket.id });
+                    if (displayDevice) {
+                        displayDevice.socket_id = null;
+                        await displayDevice.save();
+                        console.log(`Cleared socket_id for display device ${displayDevice.device_id}`);
                     }
 
-                    messageQueue.clearQueue(socket.id);
+                    const anprCamera = await ANPRCamera.findOne({ socket_id: socket.id });
+                    if (anprCamera) {
+                        anprCamera.socket_id = null;
+                        await anprCamera.save();
+                        console.log(`Cleared socket_id for ANPR camera ${anprCamera.camera_id}`);
+                    }
+
+                    const androidDevice = await AndroidDevice.findOne({ socket_id: socket.id });
+                    if (androidDevice) {
+                        androidDevice.socket_id = null;
+                        await androidDevice.save();
+                        console.log(`Cleared socket_id for Android device ${androidDevice.device_id}`);
+                    }
+                } catch (error) {
+                    console.error('Error clearing socket_id on disconnect:', error);
                 }
             });
 
@@ -190,14 +177,31 @@ const socketManager = {
             : identifier;
     },
 
-    async emitToDevice(deviceId, event, message) {
+    async emitToDevice(boothCode, deviceType, event, message) {
         try {
-            const booth = await this.findBoothByIdentifier(deviceId);
-            if (!booth) return false;
+            // Find the booth by booth code
+            const booth = await Booth.findOne({ booth_code: boothCode });
+            if (!booth) {
+                console.error(`Booth with code ${boothCode} not found`);
+                return false;
+            }
 
-            const device = booth.devices.find(d => d.device_id === deviceId);
-            if (!device?.socket_id) return false;
-            console.log("sending to", device.socket_id, event, message);
+            let device;
+            if (deviceType === 'display') {
+                // Find the display device connected to the booth
+                device = booth.displayDevices.length > 0 ? await DisplayDevice.findById(booth.displayDevices[0]) : null;
+            } else if (deviceType === 'android') {
+                // Find the Android device connected to the booth
+                device = booth.androidDevices.length > 0 ? await AndroidDevice.findById(booth.androidDevices[0]) : null;
+            }
+            // console.log("device", deviceType, device);
+
+            if (!device || !device.socket_id) {
+                console.error(`Device not found or not connected for booth ${boothCode}`);
+                return false;
+            }
+
+            console.log("Sending to", device.socket_id, event, message);
             this.io.to(device.socket_id).emit(event, message);
             return true;
         } catch (error) {

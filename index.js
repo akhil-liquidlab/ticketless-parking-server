@@ -31,10 +31,10 @@ app.use(cors());
 app.use(helmet());
 
 // Camera configuration
-const digestAuth = new AxiosDigestAuth({
-  username: process.env.CAMERA_USERNAME || "admin",
-  password: process.env.CAMERA_PASSWORD || "Liquidlab@1234",
-});
+// const digestAuth = new AxiosDigestAuth({
+//   username: process.env.CAMERA_USERNAME || "admin",
+//   password: process.env.CAMERA_PASSWORD || "Liquidlab@1234",
+// });
 
 mongoose
   .connect(process.env.MONGO_URI, {
@@ -52,10 +52,10 @@ mongoose
   .catch((err) => console.error("❌ MongoDB connection error:", err));
 
 // **Express Routes - Defined After MongoDB Connection**
-app.use("/ticketless/api/auth", authRoutes);
-app.use("/ticketless/api/parking", parkingRoutes);
-app.use("/ticketless/api/global", globalRoutes);
-app.use("/ticketless/api/booths", boothRoutes);
+app.use("/api/auth", authRoutes);
+app.use("/api/parking", parkingRoutes);
+app.use("/api/global", globalRoutes);
+app.use("/api/booths", boothRoutes);
 app.use("/NotificationInfo", notificationRoutes);
 
 // Middleware to log every incoming request

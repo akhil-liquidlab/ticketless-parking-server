@@ -16,6 +16,7 @@ const seedUsers = async () => {
         const users = [
             { username: 'admin', password: 'admin123', email: 'admin@example.com', role: 'admin' },
             { username: 'user1', password: 'user123', email: 'user1@example.com', role: 'user' },
+            { username: 'user2', password: 'user456', email: 'user2@example.com', role: 'user' }
         ];
 
         // Hash passwords before saving

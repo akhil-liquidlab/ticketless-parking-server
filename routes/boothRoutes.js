@@ -5,7 +5,11 @@ const {
     getAllBooths,
     updateBooth,
     updateDeviceSocketId,
-    sendMessageToDevice
+    sendMessageToDevice,
+    createDisplayDevice,
+    createANPRCamera,
+    createAndroidDevice,
+    addDeviceToBooth
 } = require('../controllers/boothController');
 const Booth = require('../models/boothModel');
 
@@ -16,6 +20,15 @@ router.post('/create', authenticateToken, createBooth);
 
 // Get all booths
 router.get('/', authenticateToken, getAllBooths);
+
+// Create a new display device
+router.post('/display-device', authenticateToken, createDisplayDevice);
+
+// Create a new ANPR camera
+router.post('/anpr-camera', authenticateToken, createANPRCamera);
+
+// Create a new Android device
+router.post('/android-device', authenticateToken, createAndroidDevice);
 
 // Update booth details including devices
 router.put('/:booth_code', authenticateToken, async (req, res) => {
@@ -56,5 +69,8 @@ router.put('/update-device-socket', authenticateToken, updateDeviceSocketId);
 
 // Send a message to a specific device in a booth
 router.post('/send-message', authenticateToken, sendMessageToDevice);
+
+// Add devices to a booth
+router.put('/:booth_code/add-devices', authenticateToken, addDeviceToBooth);
 
 module.exports = router;
